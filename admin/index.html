@@ -1,0 +1,639 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Yönetim Paneli</title>
+<!--
+  Admin panel for the app. All data comes from the admin_* database functions
+  (vibo-app: supabase/migrations/20261101230000_admin_panel.sql), which refuse anyone
+  not listed in the admins table. This page holds only the public URL and publishable key.
+-->
+<style>
+  :root {
+    --bg: #f4f4f2; --surface: #fcfcfb; --line: #e3e2de; --text: #0b0b0b; --muted: #52514e;
+    --accent: #2a78d6; --bar: #2a78d6; --danger: #c62f2f; --ok: #1a7f37; --warn: #a15c00;
+    --chip: #ecebe7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #111110; --surface: #1a1a19; --line: #2e2e2c; --text: #f0efec; --muted: #c3c2b7;
+      --accent: #3987e5; --bar: #3987e5; --danger: #e66767; --ok: #4cc26a; --warn: #e0a030;
+      --chip: #262624;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); }
+  header { position: sticky; top: 0; z-index: 5; background: var(--surface); border-bottom: 1px solid var(--line); }
+  .bar { display: flex; align-items: center; gap: 12px; padding: 10px 16px; max-width: 1200px; margin: 0 auto; }
+  .bar h1 { font-size: 17px; margin: 0; flex: 1; }
+  nav.tabs { display: flex; gap: 4px; padding: 0 12px; max-width: 1200px; margin: 0 auto; overflow-x: auto; }
+  nav.tabs button { border: 0; background: none; color: var(--muted); padding: 10px 12px; font: inherit; cursor: pointer; border-bottom: 2px solid transparent; white-space: nowrap; }
+  nav.tabs button.on { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+  main { max-width: 1200px; margin: 0 auto; padding: 16px; }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+  .card h2 { font-size: 15px; margin: 0 0 12px; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .tile { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+  .tile .v { font-size: 24px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .tile .l { color: var(--muted); font-size: 13px; }
+  .tile .s { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .tile.alert .v { color: var(--danger); }
+  button.btn, select, input { font: inherit; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--text); padding: 7px 12px; }
+  button.btn { cursor: pointer; }
+  button.btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  button.btn.danger { color: var(--danger); border-color: var(--danger); }
+  button.btn.ok { color: var(--ok); border-color: var(--ok); }
+  button.btn.small { padding: 4px 9px; font-size: 13px; }
+  button.btn:disabled { opacity: .5; cursor: default; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+  .row input[type=search] { flex: 1; min-width: 200px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 500; font-size: 13px; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  tr.click { cursor: pointer; }
+  tr.click:hover td { background: var(--chip); }
+  .scroll { overflow-x: auto; }
+  .chip { display: inline-block; padding: 1px 8px; border-radius: 999px; background: var(--chip); font-size: 12px; white-space: nowrap; }
+  .chip.danger { color: var(--danger); } .chip.ok { color: var(--ok); } .chip.warn { color: var(--warn); }
+  .muted { color: var(--muted); }
+  .empty { color: var(--muted); padding: 24px 0; text-align: center; }
+  .err { color: var(--danger); }
+  /* Signups chart: one series, so no legend; the card title names it. */
+  .chart { display: flex; align-items: flex-end; gap: 2px; height: 140px; padding-top: 18px; position: relative; }
+  .chart .col { flex: 1; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; position: relative; cursor: default; }
+  .chart .col .b { width: 100%; max-width: 36px; background: var(--bar); border-radius: 4px 4px 0 0; min-height: 0; }
+  .chart .col:hover .b { filter: brightness(1.12); }
+  .chart .col .n { font-size: 11px; color: var(--muted); position: absolute; top: -16px; opacity: 0; }
+  .chart .col:hover .n, .chart .col.last .n { opacity: 1; }
+  .axis { display: flex; gap: 2px; font-size: 11px; color: var(--muted); margin-top: 4px; border-top: 1px solid var(--line); padding-top: 4px; }
+  .axis span { flex: 1; text-align: center; }
+  .split { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 760px) { .split { grid-template-columns: 1fr; } .hide-m { display: none; } }
+  .kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; font-size: 14px; }
+  .kv dt { color: var(--muted); } .kv dd { margin: 0; word-break: break-word; }
+  .photos { display: flex; gap: 8px; flex-wrap: wrap; }
+  .photo { width: 120px; }
+  .photo img { width: 120px; height: 160px; object-fit: cover; border-radius: 8px; background: var(--chip); display: block; }
+  .photo .meta { display: flex; justify-content: space-between; align-items: center; margin-top: 4px; gap: 4px; }
+  dialog { border: 0; border-radius: 14px; padding: 0; width: min(900px, 96vw); max-height: 92vh; background: var(--bg); color: var(--text); }
+  dialog::backdrop { background: rgba(0,0,0,.45); }
+  dialog .head { display: flex; align-items: center; gap: 8px; padding: 12px 16px; background: var(--surface); border-bottom: 1px solid var(--line); position: sticky; top: 0; }
+  dialog .head h2 { flex: 1; margin: 0; font-size: 17px; }
+  dialog .body { padding: 16px; }
+  #login { max-width: 380px; margin: 12vh auto; text-align: center; }
+  #login .card { padding: 28px; }
+  #login p { color: var(--muted); }
+  #login input { width: 100%; margin: 8px 0; }
+  .msgs { display: flex; flex-direction: column; gap: 6px; }
+  .msg { max-width: 78%; padding: 7px 11px; border-radius: 14px; background: var(--surface); border: 1px solid var(--line); align-self: flex-start; word-break: break-word; white-space: pre-wrap; }
+  .msg.right { align-self: flex-end; background: var(--chip); }
+  .msg .t { display: block; font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .msg.deleted { font-style: italic; color: var(--muted); }
+  .daysep { align-self: center; font-size: 12px; color: var(--muted); margin: 8px 0 2px; }
+  a { color: var(--accent); }
+  .actions { display: flex; flex-wrap: wrap; gap: 4px; min-width: 120px; }
+  .toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 10px 16px; border-radius: 10px; font-size: 14px; z-index: 20; }
+</style>
+</head>
+<body>
+
+<div id="login" hidden>
+  <div class="card">
+    <h1 style="font-size:20px;margin:0 0 6px">Yönetim Paneli</h1>
+    <p>Uygulamada kullandığın Google hesabıyla gir.</p>
+    <button class="btn primary" style="width:100%" id="google">Google ile giriş yap</button>
+    <p style="margin:18px 0 4px;font-size:13px">ya da e-postana giriş bağlantısı gönder</p>
+    <input type="email" id="email" placeholder="e-posta adresin" autocomplete="email">
+    <button class="btn" style="width:100%" id="magic">Bağlantı gönder</button>
+    <p id="loginMsg" style="font-size:13px"></p>
+  </div>
+</div>
+
+<div id="denied" hidden>
+  <div id="login" style="display:block">
+    <div class="card">
+      <h1 style="font-size:20px;margin:0 0 6px">Yetkin yok</h1>
+      <p id="deniedMsg">Bu hesap admin listesinde değil.</p>
+      <button class="btn" data-signout>Çıkış yap</button>
+    </div>
+  </div>
+</div>
+
+<div id="app" hidden>
+  <header>
+    <div class="bar">
+      <h1>Yönetim Paneli</h1>
+      <span class="muted hide-m" id="who"></span>
+      <button class="btn small" id="refresh">Yenile</button>
+      <button class="btn small" data-signout>Çıkış</button>
+    </div>
+    <nav class="tabs">
+      <button data-tab="overview" class="on">Özet</button>
+      <button data-tab="reports">Şikayetler <span id="reportBadge"></span></button>
+      <button data-tab="photos">Fotoğraflar <span id="photoBadge"></span></button>
+      <button data-tab="members">Üyeler</button>
+      <button data-tab="messages">Mesajlar</button>
+      <button data-tab="sales">Satışlar</button>
+      <button data-tab="crashes">Hatalar</button>
+    </nav>
+  </header>
+  <main>
+    <section id="tab-overview"></section>
+    <section id="tab-reports" hidden>
+      <div class="row">
+        <select id="reportFilter">
+          <option value="open">Açık şikayetler</option>
+          <option value="actioned">İşlem yapılanlar</option>
+          <option value="dismissed">Yoksayılanlar</option>
+          <option value="">Hepsi</option>
+        </select>
+      </div>
+      <div class="card scroll" id="reportsList"></div>
+    </section>
+    <section id="tab-members" hidden>
+      <div class="row">
+        <input type="search" id="memberSearch" placeholder="Kullanıcı adı, e-posta ya da üye no ile ara">
+        <select id="memberFilter">
+          <option value="">Tüm üyeler</option>
+          <option value="active">Aktif</option>
+          <option value="suspended">Askıda</option>
+          <option value="banned">Banlı</option>
+        </select>
+      </div>
+      <div class="card scroll" id="membersList"></div>
+      <div class="row" style="justify-content:center">
+        <button class="btn" id="moreMembers" hidden>Daha fazla göster</button>
+      </div>
+    </section>
+    <section id="tab-messages" hidden>
+      <p class="muted" style="font-size:13px;margin-top:0">En son yazışılan sohbetler. Açtığın her sohbet kayıt altına alınır.</p>
+      <div class="card scroll" id="convList"></div>
+    </section>
+    <section id="tab-sales" hidden></section>
+    <section id="tab-photos" hidden>
+      <div class="card">
+        <label style="display:flex;gap:10px;align-items:flex-start;cursor:pointer">
+          <input type="checkbox" id="autoApprove" style="margin-top:4px">
+          <span><b>Yeni fotoğrafları otomatik onayla</b><br>
+          <span class="muted" style="font-size:13px">Açıkken yüklenen fotoğraf hemen yayınlanır. Kapatırsan yeni fotoğraflar sen onaylayana kadar kimseye görünmez ve burada sıraya girer.</span></span>
+        </label>
+      </div>
+      <div class="row">
+        <select id="photoFilter">
+          <option value="pending">Onay bekleyenler</option>
+          <option value="approved">Yayındakiler</option>
+          <option value="rejected">Kaldırılanlar</option>
+          <option value="">Hepsi</option>
+        </select>
+      </div>
+      <div class="card" id="photoGrid"></div>
+    </section>
+    <section id="tab-crashes" hidden>
+      <p class="muted" style="font-size:13px;margin-top:0">Üyelerin telefonunda oluşan uygulama hataları, en yenisi üstte.</p>
+      <div class="card scroll" id="crashList"></div>
+    </section>
+  </main>
+</div>
+
+<dialog id="memberDialog">
+  <div class="head"><h2 id="mdTitle">Üye</h2><button class="btn small" id="mdClose">Kapat</button></div>
+  <div class="body" id="mdBody"></div>
+</dialog>
+
+<dialog id="chatDialog">
+  <div class="head"><h2 id="chatTitle">Sohbet</h2><button class="btn small" id="chatClose">Kapat</button></div>
+  <div class="body" id="chatBody"></div>
+</dialog>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+// Same project and publishable key as the app (src/lib/supabase.ts). Both are public by design.
+const SUPABASE_URL = 'https://urdaurofpxfpirfimvok.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_y3TWn4RI7pbVCQbt6MGubg_PfWPWzzd';
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
+  auth: { flowType: 'pkce', persistSession: true, detectSessionInUrl: true, storageKey: 'admin-panel-auth' },
+});
+const HERE = location.origin + location.pathname;
+
+// ---------- helpers ----------
+const $ = (s) => document.querySelector(s);
+const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const num = (n) => new Intl.NumberFormat('tr-TR').format(n ?? 0);
+const tl = (n) => new Intl.NumberFormat('tr-TR', { style: 'currency', currency: 'TRY' }).format(n ?? 0);
+const date = (d) => d ? new Date(d).toLocaleString('tr-TR', { dateStyle: 'short', timeStyle: 'short' }) : '—';
+const day = (d) => new Date(d).toLocaleDateString('tr-TR', { day: 'numeric', month: 'short' });
+function ago(d) {
+  if (!d) return '—';
+  const s = (Date.now() - new Date(d).getTime()) / 1000;
+  if (s < 300) return 'şu an çevrimiçi';
+  if (s < 3600) return `${Math.round(s / 60)} dk önce`;
+  if (s < 86400) return `${Math.round(s / 3600)} saat önce`;
+  return `${Math.round(s / 86400)} gün önce`;
+}
+const flag = (cc) => cc ? cc.toUpperCase().replace(/./g, (c) => String.fromCodePoint(127397 + c.charCodeAt(0))) + ' ' + cc.toUpperCase() : '—';
+const GENDER = { female: 'Kadın', male: 'Erkek', other: 'Diğer' };
+const STATUS = { active: ['Aktif', 'ok'], suspended: ['Askıda', 'warn'], banned: ['Banlı', 'danger'] };
+const REPORT_STATUS = { open: ['Açık', 'warn'], actioned: ['İşlem yapıldı', 'ok'], dismissed: ['Yoksayıldı', ''] };
+const REASON = { nudity: 'Çıplaklık', harassment: 'Taciz', minor: '18 yaş altı', scam: 'Dolandırıcılık', hate: 'Nefret söylemi', other: 'Diğer' };
+const LEDGER = { purchase: 'Jeton satın alma', refund: 'İade', call_minute: 'Görüşme dakikası', gift: 'Hediye', boost: 'Öne çıkarma',
+  extra_invites: 'Ek davet', pro_bonus: 'Pro aylık jeton', admin: 'Admin düzeltmesi', new_chat: 'Yeni sohbet' };
+const PLAN = { weekly: 'Haftalık', monthly: 'Aylık', yearly: 'Yıllık' };
+const STORE = { app_store: 'App Store', play_store: 'Google Play', APP_STORE: 'App Store', PLAY_STORE: 'Google Play' };
+const chip = ([label, cls]) => `<span class="chip ${cls}">${esc(label)}</span>`;
+const statusChip = (s) => chip(STATUS[s] ?? [s ?? 'silinmiş', '']);
+
+function toast(msg) {
+  const t = document.createElement('div');
+  t.className = 'toast'; t.textContent = msg; document.body.append(t);
+  setTimeout(() => t.remove(), 2600);
+}
+async function rpc(name, args) {
+  const { data, error } = await sb.rpc(name, args);
+  if (error) {
+    if (/not_admin/.test(error.message)) { showDenied(); throw error; }
+    toast('Hata: ' + error.message); throw error;
+  }
+  return data;
+}
+
+// ---------- auth ----------
+$('#google').onclick = () => sb.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: HERE } });
+$('#magic').onclick = async () => {
+  const email = $('#email').value.trim();
+  if (!email) return;
+  const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: HERE, shouldCreateUser: false } });
+  $('#loginMsg').textContent = error ? 'Gönderilemedi: ' + error.message : 'Bağlantı gönderildi, e-postanı kontrol et.';
+};
+document.querySelectorAll('[data-signout]').forEach((b) => (b.onclick = async () => { await sb.auth.signOut(); location.replace(HERE); }));
+
+function showLogin() { $('#login').hidden = false; $('#app').hidden = true; $('#denied').hidden = true; }
+function showDenied() { $('#login').hidden = true; $('#app').hidden = true; $('#denied').hidden = false; }
+
+let started = false;
+async function start(session) {
+  if (!session) return showLogin();
+  if (started) return;
+  started = true;
+  $('#deniedMsg').textContent = `${session.user.email ?? 'Bu hesap'} admin listesinde değil.`;
+  try {
+    await loadOverview();
+  } catch { started = false; return; }
+  $('#login').hidden = true; $('#denied').hidden = true; $('#app').hidden = false;
+  $('#who').textContent = session.user.email ?? '';
+  if (location.search.includes('code=')) history.replaceState(null, '', HERE);
+}
+sb.auth.onAuthStateChange((_event, session) => { setTimeout(() => start(session), 0); });
+
+// ---------- tabs ----------
+let current = 'overview';
+const loaders = { overview: loadOverview, reports: loadReports, photos: loadPhotos, members: () => loadMembers(true), messages: loadConversations, sales: loadSales, crashes: loadCrashes };
+document.querySelectorAll('nav.tabs button').forEach((b) => (b.onclick = () => openTab(b.dataset.tab)));
+function openTab(tab) {
+  current = tab;
+  document.querySelectorAll('nav.tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === tab));
+  document.querySelectorAll('main > section').forEach((s) => (s.hidden = s.id !== 'tab-' + tab));
+  loaders[tab]();
+}
+$('#refresh').onclick = () => loaders[current]();
+
+// ---------- overview ----------
+async function loadOverview() {
+  const s = await rpc('admin_stats');
+  setBadges(s);
+  const tile = (v, l, sub = '', alert = false) =>
+    `<div class="tile${alert ? ' alert' : ''}"><div class="v">${v}</div><div class="l">${esc(l)}</div>${sub ? `<div class="s">${sub}</div>` : ''}</div>`;
+  const plans = Object.entries(s.pro_by_plan || {}).map(([p, n]) => `${PLAN[p] ?? p}: ${n}`).join(' · ');
+  const days = s.signups_14d || [];
+  const max = Math.max(1, ...days.map((d) => d.count));
+  const chart = `<div class="chart" role="img" aria-label="Son 14 günde günlük yeni üye sayısı">${days.map((d, i) =>
+      `<div class="col${i === days.length - 1 ? ' last' : ''}" title="${esc(day(d.day))}: ${d.count} yeni üye">
+         <span class="n">${d.count}</span><div class="b" style="height:${(d.count / max) * 100}%"></div></div>`).join('')}</div>
+    <div class="axis">${days.map((d, i) => `<span>${i % 2 === days.length % 2 ? '' : esc(day(d.day))}</span>`).join('')}</div>`;
+  const countries = (s.top_countries || []).map((c) => `<tr><td>${flag(c.country)}</td><td class="num">${num(c.count)}</td></tr>`).join('');
+  $('#tab-overview').innerHTML = `
+    <div class="tiles">
+      ${tile(num(s.members_total), 'Toplam üye', `Bugün +${num(s.members_today)} · 7 gün +${num(s.members_7d)}`)}
+      ${tile(num(s.online_now), 'Şu an çevrimiçi', `Son 24 saatte ${num(s.active_24h)} kişi girdi`)}
+      ${tile(num(s.reports_open), 'Açık şikayet', s.reports_open ? 'İncelemeni bekliyor' : 'Bekleyen yok', s.reports_open > 0)}
+      ${tile(num(s.banned), 'Banlı üye', s.suspended ? `${num(s.suspended)} askıda` : '')}
+      ${tile(num(s.calls_today), 'Bugünkü görüşme', `${num(s.call_minutes_today)} dakika · toplam ${num(s.calls_total)}`)}
+      ${tile(num(s.messages_today), 'Bugünkü mesaj')}
+      ${tile(num(s.photos_pending), 'Onay bekleyen fotoğraf', '', s.photos_pending > 0)}
+      ${tile(num(s.crashes_24h), 'Son 24 saatte hata', '', s.crashes_24h > 0)}
+      ${tile(num(s.pro_active), 'Aktif Pro üye', esc(plans))}
+      ${tile(tl(s.coin_revenue_try), 'Jeton geliri (tahmini)', `${num(s.coin_purchases)} satış · son 30 gün ${tl(s.coin_revenue_30d_try)}`)}
+    </div>
+    <div class="split">
+      <div class="card"><h2>Son 14 gün yeni üye</h2>${chart}</div>
+      <div class="card">
+        <h2>Üyeler</h2>
+        <dl class="kv">
+          <dt>Kadın</dt><dd>${num(s.female)}</dd><dt>Erkek</dt><dd>${num(s.male)}</dd><dt>Diğer</dt><dd>${num(s.other)}</dd>
+          <dt>Harcanan jeton</dt><dd>${num(s.coins_spent_total)}</dd><dt>Jeton iadesi</dt><dd>${num(s.coin_refunds)}</dd>
+        </dl>
+        <h2 style="margin-top:16px">En çok üye gelen ülkeler</h2>
+        ${countries ? `<table><tbody>${countries}</tbody></table>` : '<div class="muted">Henüz ülke bilgisi yok</div>'}
+      </div>
+    </div>
+    <p class="muted" style="font-size:13px">Gelirler mağaza liste fiyatından hesaplanan tahmindir, Apple/Google komisyonu düşülmemiştir. Kesin rakamlar RevenueCat'te.</p>`;
+}
+
+// ---------- reports ----------
+$('#reportFilter').onchange = loadReports;
+async function loadReports() {
+  const list = await rpc('admin_reports', { report_status: $('#reportFilter').value, page_size: 200 });
+  if (!list.length) { $('#reportsList').innerHTML = '<div class="empty">Burada şikayet yok 🎉</div>'; return; }
+  $('#reportsList').innerHTML = `<table><thead><tr>
+      <th>Tarih</th><th>Şikayet edilen</th><th>Sebep</th><th class="hide-m">Şikayet eden</th><th>Durum</th><th></th></tr></thead><tbody>
+    ${list.map((r) => `<tr>
+      <td class="muted">${date(r.created_at)}</td>
+      <td>${r.reported_id ? `<a href="#" data-member="${r.reported_id}">${esc(r.reported)}</a>` : '<span class="muted">silinmiş hesap</span>'}
+          ${r.reported_status && r.reported_status !== 'active' ? statusChip(r.reported_status) : ''}
+          <div class="muted" style="font-size:12px">toplam ${r.reported_total} şikayet</div></td>
+      <td><b>${esc(REASON[r.reason] ?? r.reason)}</b>${r.details ? `<div class="muted">${esc(r.details)}</div>` : ''}${r.call_id ? '<div class="muted" style="font-size:12px">görüşme sırasında</div>' : ''}</td>
+      <td class="hide-m">${r.reporter_id ? `<a href="#" data-member="${r.reporter_id}">${esc(r.reporter)}</a>` : '<span class="muted">silinmiş</span>'}</td>
+      <td>${chip(REPORT_STATUS[r.status])}</td>
+      <td><div class="actions">${r.status === 'open' ? `
+        ${r.reported_id && r.reported_status !== 'banned' ? `<button class="btn small danger" data-ban-report="${r.id}" data-uid="${r.reported_id}" data-name="${esc(r.reported)}">Banla</button>` : ''}
+        ${r.reported_id && r.reporter_id ? `<button class="btn small" data-chat-between="${r.reporter_id}" data-uid="${r.reported_id}">Sohbet</button>` : ''}
+        <button class="btn small ok" data-report="${r.id}" data-to="actioned">İşlem yapıldı</button>
+        <button class="btn small" data-report="${r.id}" data-to="dismissed">Yoksay</button>`
+        : `<button class="btn small" data-report="${r.id}" data-to="open">Yeniden aç</button>`}</div></td>
+    </tr>`).join('')}</tbody></table>`;
+}
+document.addEventListener('click', async (e) => {
+  const t = e.target.closest('[data-report],[data-ban-report],[data-member],[data-chat],[data-chat-between]');
+  if (!t) return;
+  e.preventDefault();
+  if (t.dataset.chat) return openChat(t.dataset.chat, t.dataset.title);
+  if (t.dataset.chatBetween) {
+    const id = await rpc('admin_conversation_between', { a: t.dataset.chatBetween, b: t.dataset.uid });
+    return id ? openChat(id, 'Şikayet edenle şikayet edilen') : toast('Bu iki üye hiç mesajlaşmamış');
+  }
+  if (t.dataset.member) return openMember(t.dataset.member);
+  if (t.dataset.banReport) {
+    if (!confirm(`${t.dataset.name} banlansın mı? Uygulamaya bir daha giremez.`)) return;
+    await rpc('admin_set_member_status', { member: t.dataset.uid, new_status: 'banned' });
+    await rpc('admin_set_report_status', { report: t.dataset.banReport, new_status: 'actioned' });
+    toast(`${t.dataset.name} banlandı`);
+  } else {
+    await rpc('admin_set_report_status', { report: t.dataset.report, new_status: t.dataset.to });
+    toast('Şikayet güncellendi');
+  }
+  loadReports(); refreshBadge();
+});
+async function refreshBadge() { setBadges(await rpc('admin_stats')); }
+function setBadges(s) {
+  $('#reportBadge').innerHTML = s.reports_open ? `<span class="chip danger">${s.reports_open}</span>` : '';
+  $('#photoBadge').innerHTML = s.photos_pending ? `<span class="chip warn">${s.photos_pending}</span>` : '';
+}
+
+// ---------- members ----------
+const PAGE = 50;
+let memberOffset = 0, searchTimer;
+$('#memberSearch').oninput = () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => loadMembers(true), 300); };
+$('#memberFilter').onchange = () => loadMembers(true);
+$('#moreMembers').onclick = () => loadMembers(false);
+async function loadMembers(reset) {
+  if (reset) memberOffset = 0;
+  const list = await rpc('admin_members', { search: $('#memberSearch').value.trim(), member_status: $('#memberFilter').value, page_size: PAGE, page_offset: memberOffset });
+  const rows = list.map((m) => `<tr class="click" data-member="${m.id}">
+      <td><b>${esc(m.username)}</b> ${m.is_verified ? '<span title="Doğrulanmış">✔︎</span>' : ''} ${m.is_pro ? '<span class="chip">Pro</span>' : ''}
+          <div class="muted" style="font-size:12px">${esc(m.email ?? '')}</div></td>
+      <td class="hide-m">${m.age} · ${esc(GENDER[m.gender] ?? m.gender)}</td>
+      <td class="hide-m">${flag(m.country_code)}</td>
+      <td class="muted hide-m">${date(m.created_at)}</td>
+      <td class="muted">${ago(m.last_seen_at)}</td>
+      <td class="num">${num(m.coins)}</td>
+      <td class="num">${m.reports_against ? `<span class="chip ${m.reports_open ? 'danger' : ''}">${m.reports_against}</span>` : '0'}</td>
+      <td>${statusChip(m.status)}</td></tr>`).join('');
+  const head = `<table><thead><tr><th>Üye</th><th class="hide-m">Yaş</th><th class="hide-m">Ülke</th><th class="hide-m">Kayıt</th>
+      <th>Son görülme</th><th class="num">Jeton</th><th class="num">Şikayet</th><th>Durum</th></tr></thead><tbody id="memberRows"></tbody></table>`;
+  if (reset) $('#membersList').innerHTML = list.length ? head : '<div class="empty">Üye bulunamadı</div>';
+  if (list.length) $('#memberRows').insertAdjacentHTML('beforeend', rows);
+  memberOffset += list.length;
+  $('#moreMembers').hidden = list.length < PAGE;
+}
+
+// ---------- member detail ----------
+$('#mdClose').onclick = () => $('#memberDialog').close();
+let openId = null;
+async function openMember(id) {
+  openId = id;
+  const [d, convs] = await Promise.all([rpc('admin_member', { member: id }), rpc('admin_conversations', { member: id, page_size: 100 })]);
+  const p = d.profile;
+  if (!p) { toast('Üye bulunamadı (hesabını silmiş olabilir)'); return; }
+  $('#mdTitle').textContent = p.username;
+  const urls = {};
+  if (d.photos.length) {
+    const { data } = await sb.storage.from('photos').createSignedUrls(d.photos.map((x) => x.storage_path), 3600);
+    (data || []).forEach((u) => { if (u.signedUrl) urls[u.path] = u.signedUrl; });
+  }
+  const sub = d.subscription;
+  const proText = sub ? `${PLAN[sub.plan] ?? sub.plan} · ${STORE[sub.store] ?? sub.store} · ${new Date(sub.expires_at) > new Date() ? 'bitiş' : 'bitti'} ${date(sub.expires_at)}` : 'Hiç almadı';
+  const photoStatus = { approved: ['Yayında', 'ok'], pending: ['Bekliyor', 'warn'], rejected: ['Kaldırıldı', 'danger'] };
+  $('#mdBody').innerHTML = `
+    <div class="row">
+      ${statusChip(p.status)} ${p.is_verified ? '<span class="chip ok">Doğrulanmış</span>' : ''} ${p.is_pro ? '<span class="chip">Pro</span>' : ''}
+      <span style="flex:1"></span>
+      ${p.status === 'banned' || p.status === 'suspended'
+        ? `<button class="btn ok" data-status="active">Banı kaldır</button>`
+        : `<button class="btn" data-status="suspended">Askıya al</button><button class="btn danger" data-status="banned">Banla</button>`}
+      <button class="btn" id="coinBtn">Jeton ekle / düş</button>
+    </div>
+    <div class="split">
+      <div class="card">
+        <h2>Profil</h2>
+        <dl class="kv">
+          <dt>E-posta</dt><dd>${esc(p.email ?? '—')}</dd>
+          <dt>Giriş yöntemi</dt><dd>${esc((p.providers || []).join(', ') || '—')}</dd>
+          <dt>Yaş</dt><dd>${p.age} (${esc(p.birth_date)})</dd>
+          <dt>Cinsiyet</dt><dd>${esc(GENDER[p.gender] ?? p.gender)}${p.show_gender ? '' : ' <span class="muted">(gizli)</span>'}</dd>
+          <dt>Ülke</dt><dd>${flag(p.country_code)}</dd>
+          <dt>Diller</dt><dd>${esc((p.languages || []).join(', ') || '—')}</dd>
+          <dt>Hakkında</dt><dd>${esc(p.bio || '—')}</dd>
+          <dt>İlgi alanları</dt><dd>${esc((p.interests || []).join(', ') || '—')}</dd>
+          <dt>Kayıt</dt><dd>${date(p.created_at)}</dd>
+          <dt>Son görülme</dt><dd>${ago(p.last_seen_at)}</dd>
+          <dt>Son giriş</dt><dd>${date(p.last_sign_in_at)}</dd>
+          <dt>Üye no</dt><dd class="muted" style="font-size:12px">${esc(p.id)}</dd>
+        </dl>
+      </div>
+      <div class="card">
+        <h2>Hesap</h2>
+        <dl class="kv">
+          <dt>Jeton bakiyesi</dt><dd><b>${num(p.coins)}</b></dd>
+          <dt>Hoş geldin süresi</dt><dd>${Math.round((p.welcome_seconds_left ?? 0) / 60 * 10) / 10} dk kaldı</dd>
+          <dt>Pro</dt><dd>${esc(proText)}</dd>
+          <dt>Görüşme</dt><dd>${num(d.counts.calls)}</dd>
+          <dt>Gönderdiği davet</dt><dd>${num(d.counts.invites_sent)}</dd>
+          <dt>Gönderdiği mesaj</dt><dd>${num(d.counts.messages_sent)}</dd>
+          <dt>Takipçi</dt><dd>${num(d.counts.followers)}</dd>
+          <dt>Onu engelleyen</dt><dd>${num(d.counts.blocked_by)}</dd>
+        </dl>
+      </div>
+    </div>
+    <div class="card"><h2>Fotoğraflar</h2>
+      ${d.photos.length ? `<div class="photos">${d.photos.map((ph) => `<div class="photo">
+          ${urls[ph.storage_path] ? `<a href="${esc(urls[ph.storage_path])}" target="_blank" rel="noopener"><img src="${esc(urls[ph.storage_path])}" alt=""></a>` : '<img alt="">'}
+          <div class="meta">${chip(photoStatus[ph.moderation_status] ?? [ph.moderation_status, ''])}
+          ${ph.moderation_status === 'rejected'
+            ? `<button class="btn small" data-photo="${ph.id}" data-to="approved">Geri al</button>`
+            : `<button class="btn small danger" data-photo="${ph.id}" data-to="rejected">Kaldır</button>`}</div></div>`).join('')}</div>`
+        : '<div class="muted">Fotoğraf yok</div>'}
+    </div>
+    <div class="card scroll"><h2>Hakkındaki şikayetler (${d.reports_against.length})</h2>
+      ${d.reports_against.length ? `<table><tbody>${d.reports_against.map((r) => `<tr><td class="muted">${date(r.created_at)}</td>
+        <td><b>${esc(REASON[r.reason] ?? r.reason)}</b>${r.details ? ` <span class="muted">${esc(r.details)}</span>` : ''}</td>
+        <td>${esc(r.reporter ?? 'silinmiş')}</td><td>${chip(REPORT_STATUS[r.status])}</td></tr>`).join('')}</tbody></table>` : '<div class="muted">Yok</div>'}
+      ${d.reports_by.length ? `<h2 style="margin-top:16px">Yaptığı şikayetler (${d.reports_by.length})</h2><table><tbody>${d.reports_by.map((r) => `<tr>
+        <td class="muted">${date(r.created_at)}</td><td>${esc(REASON[r.reason] ?? r.reason)}</td><td>${esc(r.reported ?? 'silinmiş')}</td><td>${chip(REPORT_STATUS[r.status])}</td></tr>`).join('')}</tbody></table>` : ''}
+    </div>
+    <div class="card scroll"><h2>Sohbetleri (${convs.length})</h2>
+      ${convs.length ? convTable(convs, id) : '<div class="muted">Mesajlaşmamış</div>'}
+    </div>
+    <div class="card scroll"><h2>Son görüşmeler</h2>
+      ${d.calls.length ? `<table><thead><tr><th>Tarih</th><th>Kiminle</th><th class="num">Süre</th><th class="num">Jeton</th></tr></thead><tbody>${d.calls.map((c) => {
+        const mins = c.started_at ? Math.round((new Date(c.ended_at || Date.now()) - new Date(c.started_at)) / 60000) : 0;
+        return `<tr><td class="muted">${date(c.started_at)}</td><td>${c.direction === 'out' ? '→' : '←'} ${esc(c.other ?? 'silinmiş')}</td>
+          <td class="num">${c.started_at ? mins + ' dk' : 'açılmadı'}</td><td class="num">${num(c.coins_spent)}</td></tr>`; }).join('')}</tbody></table>` : '<div class="muted">Görüşme yok</div>'}
+    </div>
+    <div class="card scroll"><h2>Jeton hareketleri</h2>
+      ${d.ledger.length ? `<table><tbody>${d.ledger.map((l) => `<tr><td class="muted">${date(l.created_at)}</td><td>${esc(LEDGER[l.reason] ?? l.reason)}${l.reason === 'admin' && l.ref_id ? ` <span class="muted">(${esc(l.ref_id)})</span>` : ''}</td>
+        <td class="num" style="color:${l.amount < 0 ? 'var(--danger)' : 'var(--ok)'}">${l.amount > 0 ? '+' : ''}${num(l.amount)}</td></tr>`).join('')}</tbody></table>` : '<div class="muted">Hareket yok</div>'}
+    </div>`;
+  if (!$('#memberDialog').open) $('#memberDialog').showModal();
+  $('#coinBtn').onclick = async () => {
+    const v = prompt('Kaç jeton? Eklemek için 50, düşmek için -50 yaz.');
+    const amount = parseInt(v ?? '', 10);
+    if (!amount) return;
+    const note = prompt('Not (isteğe bağlı, örn. "destek talebi")') ?? '';
+    const bal = await rpc('admin_adjust_coins', { member: id, amount, note });
+    toast(`Yeni bakiye: ${num(bal)}`); openMember(id);
+  };
+}
+$('#mdBody').addEventListener('click', async (e) => {
+  const s = e.target.closest('[data-status]');
+  const ph = e.target.closest('[data-photo]');
+  if (s) {
+    const msg = { banned: 'Bu üye banlansın mı? Uygulamaya bir daha giremez.', suspended: 'Bu üye askıya alınsın mı? Profili gizlenir ve girişi engellenir.', active: 'Ban kaldırılsın mı?' }[s.dataset.status];
+    if (!confirm(msg)) return;
+    await rpc('admin_set_member_status', { member: openId, new_status: s.dataset.status });
+    toast('Üye güncellendi'); openMember(openId);
+    if (current === 'members') loadMembers(true);
+  }
+  if (ph) {
+    if (ph.dataset.to === 'rejected' && !confirm('Bu fotoğraf kaldırılsın mı? Diğer üyeler artık göremez.')) return;
+    await rpc('admin_set_photo_status', { photo: ph.dataset.photo, new_status: ph.dataset.to });
+    toast('Fotoğraf güncellendi'); openMember(openId);
+  }
+});
+
+// ---------- messages ----------
+function convTable(list, me) {
+  return `<table><thead><tr><th>Kişiler</th><th>Son mesaj</th><th class="num">Mesaj</th><th class="hide-m">Tarih</th></tr></thead><tbody>
+    ${list.map((c) => {
+      const a = esc(c.user_a_name ?? 'silinmiş'), b = esc(c.user_b_name ?? 'silinmiş');
+      const who = me ? (c.user_a === me ? b : a) : `${a} ↔ ${b}`;
+      return `<tr class="click" data-chat="${c.id}" data-title="${me ? who : `${a} ↔ ${b}`}">
+        <td><b>${who}</b></td><td class="muted">${esc((c.last_message_body ?? '').slice(0, 80)) || '—'}</td>
+        <td class="num">${num(c.message_count)}</td><td class="muted hide-m">${date(c.last_message_at)}</td></tr>`; }).join('')}
+  </tbody></table>`;
+}
+async function loadConversations() {
+  const list = await rpc('admin_conversations', { member: null, page_size: 200 });
+  $('#convList').innerHTML = list.length ? convTable(list, null) : '<div class="empty">Henüz mesaj yok</div>';
+}
+$('#chatClose').onclick = () => $('#chatDialog').close();
+async function openChat(id, title) {
+  const msgs = await rpc('admin_messages', { conversation: id });
+  const first = msgs[0]?.sender_id;
+  let lastDay = '';
+  $('#chatTitle').textContent = title || 'Sohbet';
+  $('#chatBody').innerHTML = msgs.length ? `<div class="msgs">${msgs.map((m) => {
+      const d = new Date(m.created_at).toLocaleDateString('tr-TR', { dateStyle: 'medium' });
+      const sep = d !== lastDay ? `<div class="daysep">${esc(d)}</div>` : '';
+      lastDay = d;
+      const time = new Date(m.created_at).toLocaleTimeString('tr-TR', { timeStyle: 'short' });
+      return `${sep}<div class="msg${m.sender_id === first ? '' : ' right'}${m.deleted_at ? ' deleted' : ''}">${m.deleted_at ? 'Gönderen bu mesajı sildi' : esc(m.body)}<span class="t">${m.sender_id ? `<a href="#" data-member="${m.sender_id}">${esc(m.sender ?? 'silinmiş')}</a>` : 'silinmiş hesap'} · ${time}</span></div>`; }).join('')}</div>`
+    : '<div class="empty">Bu sohbette mesaj yok</div>';
+  if (!$('#chatDialog').open) $('#chatDialog').showModal();
+}
+// Opening a member from inside a chat closes the chat first.
+$('#chatBody').addEventListener('click', (e) => { if (e.target.closest('[data-member]')) $('#chatDialog').close(); });
+
+// ---------- photo review ----------
+$('#photoFilter').onchange = loadPhotos;
+$('#autoApprove').onchange = async (e) => {
+  const on = e.target.checked;
+  if (!confirm(on ? 'Yeni fotoğraflar otomatik onaylansın mı?' : 'Otomatik onay kapansın mı? Yeni fotoğraflar sen onaylayana kadar görünmez.')) { e.target.checked = !on; return; }
+  await rpc('admin_set_photo_auto_approve', { enabled: on });
+  toast(on ? 'Otomatik onay açık' : 'Otomatik onay kapalı');
+};
+async function loadPhotos() {
+  const d = await rpc('admin_photos', { photo_status: $('#photoFilter').value, page_size: 120 });
+  $('#autoApprove').checked = d.auto_approve;
+  $('#photoBadge').innerHTML = d.pending ? `<span class="chip warn">${d.pending}</span>` : '';
+  if (!d.photos.length) { $('#photoGrid').innerHTML = '<div class="empty">Burada fotoğraf yok</div>'; return; }
+  const urls = {};
+  const { data } = await sb.storage.from('photos').createSignedUrls(d.photos.map((x) => x.storage_path), 3600);
+  (data || []).forEach((u) => { if (u.signedUrl) urls[u.path] = u.signedUrl; });
+  $('#photoGrid').innerHTML = `<div class="photos">${d.photos.map((ph) => `<div class="photo">
+      ${urls[ph.storage_path] ? `<a href="${esc(urls[ph.storage_path])}" target="_blank" rel="noopener"><img src="${esc(urls[ph.storage_path])}" alt=""></a>` : '<img alt="">'}
+      <div style="font-size:13px;margin-top:4px"><a href="#" data-member="${ph.user_id}">${esc(ph.username)}</a> <span class="muted">${esc(day(ph.created_at))}</span></div>
+      <div class="meta">
+        ${ph.moderation_status !== 'approved' ? `<button class="btn small ok" data-qphoto="${ph.id}" data-to="approved">Onayla</button>` : ''}
+        ${ph.moderation_status !== 'rejected' ? `<button class="btn small danger" data-qphoto="${ph.id}" data-to="rejected">Kaldır</button>` : ''}
+      </div></div>`).join('')}</div>`;
+}
+$('#photoGrid').addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-qphoto]');
+  if (!b) return;
+  b.disabled = true;
+  await rpc('admin_set_photo_status', { photo: b.dataset.qphoto, new_status: b.dataset.to });
+  b.closest('.photo').remove();
+  refreshBadge();
+});
+
+// ---------- crash reports ----------
+async function loadCrashes() {
+  const list = await rpc('admin_crash_reports', { page_size: 300 });
+  if (!list.length) { $('#crashList').innerHTML = '<div class="empty">Hata kaydı yok 🎉</div>'; return; }
+  $('#crashList').innerHTML = `<table><thead><tr><th>Tarih</th><th>Hata</th><th class="hide-m">Ekran</th><th class="hide-m">Cihaz</th><th>Üye</th></tr></thead><tbody>
+    ${list.map((c) => `<tr>
+      <td class="muted">${date(c.created_at)}</td>
+      <td>${c.fatal ? '<span class="chip danger">Çöktü</span> ' : ''}${esc(c.message)}
+        ${c.stack ? `<details><summary class="muted" style="font-size:12px;cursor:pointer">ayrıntı</summary><pre style="white-space:pre-wrap;font-size:11px;margin:4px 0">${esc(c.stack)}</pre></details>` : ''}</td>
+      <td class="hide-m muted">${esc(c.screen ?? '—')}</td>
+      <td class="hide-m muted">${esc([c.platform, c.os_version, c.app_version && 'v' + c.app_version].filter(Boolean).join(' · '))}</td>
+      <td>${c.user_id ? `<a href="#" data-member="${c.user_id}">${esc(c.username ?? 'silinmiş')}</a>` : '<span class="muted">girişsiz</span>'}</td></tr>`).join('')}
+  </tbody></table>`;
+}
+
+// ---------- sales ----------
+async function loadSales() {
+  const d = await rpc('admin_sales', { page_size: 300 });
+  const active = d.subscriptions.filter((s) => s.active);
+  $('#tab-sales').innerHTML = `
+    <div class="card scroll"><h2>Pro abonelikler (${active.length} aktif)</h2>
+      ${d.subscriptions.length ? `<table><thead><tr><th>Üye</th><th>Plan</th><th class="hide-m">Mağaza</th><th>Bitiş</th><th class="num">Fiyat</th><th>Durum</th></tr></thead><tbody>
+      ${d.subscriptions.map((s) => `<tr><td><a href="#" data-member="${s.user_id}">${esc(s.username ?? 'silinmiş')}</a></td>
+        <td>${esc(PLAN[s.plan] ?? s.plan)}</td><td class="hide-m">${esc(STORE[s.store] ?? s.store)}</td><td class="muted">${date(s.expires_at)}</td>
+        <td class="num">${tl(s.price_try)}</td><td>${s.active ? '<span class="chip ok">Aktif</span>' : '<span class="chip">Bitti</span>'}</td></tr>`).join('')}
+      </tbody></table>` : '<div class="empty">Henüz Pro abonelik yok</div>'}
+    </div>
+    <div class="card scroll"><h2>Jeton satışları ve iadeler</h2>
+      ${d.coins.length ? `<table><thead><tr><th>Tarih</th><th>Üye</th><th>İşlem</th><th class="num">Jeton</th><th class="num">Tutar</th></tr></thead><tbody>
+      ${d.coins.map((l) => `<tr><td class="muted">${date(l.created_at)}</td><td><a href="#" data-member="${l.user_id}">${esc(l.username ?? 'silinmiş')}</a></td>
+        <td>${l.reason === 'refund' ? '<span class="chip danger">İade</span>' : 'Satın alma'}</td>
+        <td class="num">${num(l.amount)}</td><td class="num">${tl(l.price_try)}</td></tr>`).join('')}
+      </tbody></table>` : '<div class="empty">Henüz jeton satışı yok</div>'}
+    </div>
+    <p class="muted" style="font-size:13px">Tutarlar mağaza liste fiyatıdır (TL). Kesin gelir ve komisyonlar RevenueCat, App Store Connect ve Google Play Console'da.</p>`;
+}
+</script>
+</body>
+</html>
