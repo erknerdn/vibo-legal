@@ -127,6 +127,7 @@
     <div class="bar">
       <h1>Yönetim Paneli</h1>
       <span class="muted hide-m" id="who"></span>
+      <span class="muted" id="updated" style="font-size:12px"></span>
       <button class="btn small" id="refresh">Yenile</button>
       <button class="btn small" data-signout>Çıkış</button>
     </div>
@@ -233,7 +234,7 @@ function ago(d) {
   if (s < 86400) return `${Math.round(s / 3600)} saat önce`;
   return `${Math.round(s / 86400)} gün önce`;
 }
-const flag = (cc) => cc ? cc.toUpperCase().replace(/./g, (c) => String.fromCodePoint(127397 + c.charCodeAt(0))) + ' ' + cc.toUpperCase() : '—';
+const flag = (cc) => cc ? cc.toUpperCase() : '—';
 const GENDER = { female: 'Kadın', male: 'Erkek', other: 'Diğer' };
 const STATUS = { active: ['Aktif', 'ok'], suspended: ['Askıda', 'warn'], banned: ['Banlı', 'danger'] };
 const REPORT_STATUS = { open: ['Açık', 'warn'], actioned: ['İşlem yapıldı', 'ok'], dismissed: ['Yoksayıldı', ''] };
@@ -283,6 +284,7 @@ async function start(session) {
   } catch { started = false; return; }
   $('#login').hidden = true; $('#denied').hidden = true; $('#app').hidden = false;
   $('#who').textContent = session.user.email ?? '';
+  $('#updated').textContent = 'Güncellendi ' + new Date().toLocaleTimeString('tr-TR', { timeStyle: 'short' });
   if (location.search.includes('code=')) history.replaceState(null, '', HERE);
 }
 sb.auth.onAuthStateChange((_event, session) => { setTimeout(() => start(session), 0); });
@@ -297,7 +299,31 @@ function openTab(tab) {
   document.querySelectorAll('main > section').forEach((s) => (s.hidden = s.id !== 'tab-' + tab));
   loaders[tab]();
 }
-$('#refresh').onclick = () => loaders[current]();
+$('#refresh').onclick = () => refreshNow();
+
+// Refreshes the open tab every 30 seconds while the page is visible. It waits while a member or
+// chat window is open, or while you are typing or reading an expanded crash, so nothing jumps.
+const AUTO_REFRESH_MS = 30000;
+let lastRefresh = Date.now();
+async function refreshNow() {
+  await loaders[current]();
+  if (current !== 'overview') await refreshBadge();
+  lastRefresh = Date.now();
+  $('#updated').textContent = 'Güncellendi ' + new Date().toLocaleTimeString('tr-TR', { timeStyle: 'short' });
+}
+function busy() {
+  return $('#memberDialog').open || $('#chatDialog').open || document.querySelector('details[open]')
+    || document.activeElement?.matches('input, select, textarea')
+    || (current === 'members' && memberOffset > PAGE);
+}
+async function autoRefresh() {
+  if (document.hidden || $('#app').hidden || busy()) return;
+  try { await refreshNow(); } catch { /* shown by rpc(); try again next round */ }
+}
+setInterval(autoRefresh, AUTO_REFRESH_MS);
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && Date.now() - lastRefresh > AUTO_REFRESH_MS) autoRefresh();
+});
 
 // ---------- overview ----------
 async function loadOverview() {
