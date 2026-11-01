@@ -127,7 +127,8 @@
     <div class="bar">
       <h1>Yönetim Paneli</h1>
       <span class="muted hide-m" id="who"></span>
-      <span class="muted" id="updated" style="font-size:12px"></span>
+      <span class="muted hide-m" id="updated" style="font-size:12px"></span>
+      <button class="btn small" id="notifyBtn" hidden>Bildirimleri aç</button>
       <button class="btn small" id="refresh">Yenile</button>
       <button class="btn small" data-signout>Çıkış</button>
     </div>
@@ -135,9 +136,12 @@
       <button data-tab="overview" class="on">Özet</button>
       <button data-tab="reports">Şikayetler <span id="reportBadge"></span></button>
       <button data-tab="photos">Fotoğraflar <span id="photoBadge"></span></button>
+      <button data-tab="suspicious">Şüpheli <span id="suspBadge"></span></button>
       <button data-tab="members">Üyeler</button>
       <button data-tab="messages">Mesajlar</button>
+      <button data-tab="calls">Görüşmeler</button>
       <button data-tab="sales">Satışlar</button>
+      <button data-tab="announce">Duyurular</button>
       <button data-tab="crashes">Hatalar</button>
     </nav>
   </header>
@@ -191,6 +195,24 @@
         </select>
       </div>
       <div class="card" id="photoGrid"></div>
+    </section>
+    <section id="tab-suspicious" hidden>
+      <p class="muted" style="font-size:13px;margin-top:0">Açık şikayeti, son 30 günde şikayeti ya da son 7 günde engellenmesi çok olan, son 24 saatte çok davet atan veya çok yeni sohbet açan aktif üyeler. Puan yükseldikçe daha şüpheli.</p>
+      <div class="card scroll" id="suspList"></div>
+    </section>
+    <section id="tab-calls" hidden>
+      <p class="muted" style="font-size:13px;margin-top:0">Son görüntülü görüşmeler. Görüntü ve ses kaydedilmez, sadece kim kiminle ne kadar konuştu görünür.</p>
+      <div class="card scroll" id="callList"></div>
+    </section>
+    <section id="tab-announce" hidden>
+      <div class="card">
+        <h2>Herkese bildirim gönder</h2>
+        <p class="muted" style="font-size:13px;margin-top:0">Bildirimleri açık olan bütün aktif üyelerin telefonuna gider. Tek bir kişiye göndermek için üyenin sayfasındaki "Bildirim gönder" düğmesini kullan.</p>
+        <input id="annTitle" maxlength="60" placeholder="Başlık (boş bırakırsan uygulamanın adı yazar)" style="width:100%;margin-bottom:8px">
+        <textarea id="annBody" maxlength="300" rows="3" placeholder="Mesaj (en fazla 300 harf)" style="width:100%;font:inherit;border-radius:8px;border:1px solid var(--line);background:var(--surface);color:var(--text);padding:7px 12px"></textarea>
+        <div class="row" style="margin:8px 0 0"><button class="btn primary" id="annSend">Herkese gönder</button></div>
+      </div>
+      <div class="card scroll"><h2>Gönderilenler</h2><div id="annList"></div></div>
     </section>
     <section id="tab-crashes" hidden>
       <p class="muted" style="font-size:13px;margin-top:0">Üyelerin telefonunda oluşan uygulama hataları, en yenisi üstte.</p>
@@ -291,7 +313,7 @@ sb.auth.onAuthStateChange((_event, session) => { setTimeout(() => start(session)
 
 // ---------- tabs ----------
 let current = 'overview';
-const loaders = { overview: loadOverview, reports: loadReports, photos: loadPhotos, members: () => loadMembers(true), messages: loadConversations, sales: loadSales, crashes: loadCrashes };
+const loaders = { overview: loadOverview, reports: loadReports, photos: loadPhotos, suspicious: loadSuspicious, calls: loadCalls, announce: loadAnnouncements, members: () => loadMembers(true), messages: loadConversations, sales: loadSales, crashes: loadCrashes };
 document.querySelectorAll('nav.tabs button').forEach((b) => (b.onclick = () => openTab(b.dataset.tab)));
 function openTab(tab) {
   current = tab;
@@ -332,12 +354,7 @@ async function loadOverview() {
   const tile = (v, l, sub = '', alert = false) =>
     `<div class="tile${alert ? ' alert' : ''}"><div class="v">${v}</div><div class="l">${esc(l)}</div>${sub ? `<div class="s">${sub}</div>` : ''}</div>`;
   const plans = Object.entries(s.pro_by_plan || {}).map(([p, n]) => `${PLAN[p] ?? p}: ${n}`).join(' · ');
-  const days = s.signups_14d || [];
-  const max = Math.max(1, ...days.map((d) => d.count));
-  const chart = `<div class="chart" role="img" aria-label="Son 14 günde günlük yeni üye sayısı">${days.map((d, i) =>
-      `<div class="col${i === days.length - 1 ? ' last' : ''}" title="${esc(day(d.day))}: ${d.count} yeni üye">
-         <span class="n">${d.count}</span><div class="b" style="height:${(d.count / max) * 100}%"></div></div>`).join('')}</div>
-    <div class="axis">${days.map((d, i) => `<span>${i % 2 === days.length % 2 ? '' : esc(day(d.day))}</span>`).join('')}</div>`;
+  const chart = barChart(s.signups_14d || [], 'count', (v) => `${v} yeni üye`, num, 'Son 14 günde günlük yeni üye sayısı');
   const countries = (s.top_countries || []).map((c) => `<tr><td>${flag(c.country)}</td><td class="num">${num(c.count)}</td></tr>`).join('');
   $('#tab-overview').innerHTML = `
     <div class="tiles">
@@ -367,6 +384,16 @@ async function loadOverview() {
     <p class="muted" style="font-size:13px">Gelirler mağaza liste fiyatından hesaplanan tahmindir, Apple/Google komisyonu düşülmemiştir. Kesin rakamlar RevenueCat'te.</p>`;
 }
 
+// One series of daily bars. Labels every other day (every 5th when there are many days).
+function barChart(days, key, tip, short, label) {
+  const max = Math.max(1, ...days.map((d) => d[key]));
+  const step = days.length > 16 ? 5 : 2;
+  return `<div class="chart" role="img" aria-label="${esc(label)}">${days.map((d, i) =>
+      `<div class="col${i === days.length - 1 ? ' last' : ''}" title="${esc(day(d.day))}: ${esc(tip(d[key]))}">
+         <span class="n">${esc(short(d[key]))}</span><div class="b" style="height:${(Math.max(0, d[key]) / max) * 100}%"></div></div>`).join('')}</div>
+    <div class="axis">${days.map((d, i) => `<span>${(days.length - 1 - i) % step ? '' : esc(day(d.day))}</span>`).join('')}</div>`;
+}
+
 // ---------- reports ----------
 $('#reportFilter').onchange = loadReports;
 async function loadReports() {
@@ -383,7 +410,7 @@ async function loadReports() {
       <td class="hide-m">${r.reporter_id ? `<a href="#" data-member="${r.reporter_id}">${esc(r.reporter)}</a>` : '<span class="muted">silinmiş</span>'}</td>
       <td>${chip(REPORT_STATUS[r.status])}</td>
       <td><div class="actions">${r.status === 'open' ? `
-        ${r.reported_id && r.reported_status !== 'banned' ? `<button class="btn small danger" data-ban-report="${r.id}" data-uid="${r.reported_id}" data-name="${esc(r.reported)}">Banla</button>` : ''}
+        ${r.reported_id && r.reported_status !== 'banned' ? `<button class="btn small danger" data-ban-report="${r.id}" data-uid="${r.reported_id}" data-name="${esc(r.reported)}" data-reason="${esc(r.reason)}">Banla</button>` : ''}
         ${r.reported_id && r.reporter_id ? `<button class="btn small" data-chat-between="${r.reporter_id}" data-uid="${r.reported_id}">Sohbet</button>` : ''}
         <button class="btn small ok" data-report="${r.id}" data-to="actioned">İşlem yapıldı</button>
         <button class="btn small" data-report="${r.id}" data-to="dismissed">Yoksay</button>`
@@ -401,8 +428,9 @@ document.addEventListener('click', async (e) => {
   }
   if (t.dataset.member) return openMember(t.dataset.member);
   if (t.dataset.banReport) {
-    if (!confirm(`${t.dataset.name} banlansın mı? Uygulamaya bir daha giremez.`)) return;
-    await rpc('admin_set_member_status', { member: t.dataset.uid, new_status: 'banned' });
+    const reason = prompt(`${t.dataset.name} banlansın mı? Uygulamaya bir daha giremez.\n\nSebep (üyeye gösterilir, boş bırakabilirsin):`, REASON[t.dataset.reason] ?? '');
+    if (reason === null) return;
+    await rpc('admin_set_member_status', { member: t.dataset.uid, new_status: 'banned', reason });
     await rpc('admin_set_report_status', { report: t.dataset.banReport, new_status: 'actioned' });
     toast(`${t.dataset.name} banlandı`);
   } else {
@@ -413,6 +441,7 @@ document.addEventListener('click', async (e) => {
 });
 async function refreshBadge() { setBadges(await rpc('admin_stats')); }
 function setBadges(s) {
+  checkAlerts(s);
   $('#reportBadge').innerHTML = s.reports_open ? `<span class="chip danger">${s.reports_open}</span>` : '';
   $('#photoBadge').innerHTML = s.photos_pending ? `<span class="chip warn">${s.photos_pending}</span>` : '';
 }
@@ -469,6 +498,7 @@ async function openMember(id) {
         ? `<button class="btn ok" data-status="active">Banı kaldır</button>`
         : `<button class="btn" data-status="suspended">Askıya al</button><button class="btn danger" data-status="banned">Banla</button>`}
       <button class="btn" id="coinBtn">Jeton ekle / düş</button>
+      <button class="btn" id="pushBtn">Bildirim gönder</button>
     </div>
     <div class="split">
       <div class="card">
@@ -485,6 +515,7 @@ async function openMember(id) {
           <dt>Kayıt</dt><dd>${date(p.created_at)}</dd>
           <dt>Son görülme</dt><dd>${ago(p.last_seen_at)}</dd>
           <dt>Son giriş</dt><dd>${date(p.last_sign_in_at)}</dd>
+          ${p.ban_reason ? `<dt>Ban sebebi</dt><dd>${esc(p.ban_reason)}</dd>` : ''}
           <dt>Üye no</dt><dd class="muted" style="font-size:12px">${esc(p.id)}</dd>
         </dl>
       </div>
@@ -532,6 +563,12 @@ async function openMember(id) {
         <td class="num" style="color:${l.amount < 0 ? 'var(--danger)' : 'var(--ok)'}">${l.amount > 0 ? '+' : ''}${num(l.amount)}</td></tr>`).join('')}</tbody></table>` : '<div class="muted">Hareket yok</div>'}
     </div>`;
   if (!$('#memberDialog').open) $('#memberDialog').showModal();
+  $('#pushBtn').onclick = async () => {
+    const body = prompt(`${p.username} adlı üyenin telefonuna gidecek mesaj (en fazla 300 harf):`);
+    if (!body?.trim()) return;
+    const n = await rpc('admin_send_push', { title: null, body, member: id });
+    toast(n ? 'Bildirim gönderildi' : 'Bu üyenin bildirimleri kapalı, gönderilemedi');
+  };
   $('#coinBtn').onclick = async () => {
     const v = prompt('Kaç jeton? Eklemek için 50, düşmek için -50 yaz.');
     const amount = parseInt(v ?? '', 10);
@@ -545,9 +582,15 @@ $('#mdBody').addEventListener('click', async (e) => {
   const s = e.target.closest('[data-status]');
   const ph = e.target.closest('[data-photo]');
   if (s) {
-    const msg = { banned: 'Bu üye banlansın mı? Uygulamaya bir daha giremez.', suspended: 'Bu üye askıya alınsın mı? Profili gizlenir ve girişi engellenir.', active: 'Ban kaldırılsın mı?' }[s.dataset.status];
-    if (!confirm(msg)) return;
-    await rpc('admin_set_member_status', { member: openId, new_status: s.dataset.status });
+    let reason = null;
+    if (s.dataset.status === 'active') {
+      if (!confirm('Ban kaldırılsın mı?')) return;
+    } else {
+      const msg = s.dataset.status === 'banned' ? 'Bu üye banlansın mı? Uygulamaya bir daha giremez.' : 'Bu üye askıya alınsın mı? Profili gizlenir ve girişi engellenir.';
+      reason = prompt(`${msg}\n\nSebep (üyeye gösterilir, boş bırakabilirsin):`, '');
+      if (reason === null) return;
+    }
+    await rpc('admin_set_member_status', { member: openId, new_status: s.dataset.status, reason });
     toast('Üye güncellendi'); openMember(openId);
     if (current === 'members') loadMembers(true);
   }
@@ -639,11 +682,103 @@ async function loadCrashes() {
   </tbody></table>`;
 }
 
+// ---------- suspicious ----------
+async function loadSuspicious() {
+  const list = await rpc('admin_suspicious', { page_size: 100 });
+  $('#suspBadge').innerHTML = list.filter((x) => x.score >= 5).length ? `<span class="chip warn">${list.filter((x) => x.score >= 5).length}</span>` : '';
+  if (!list.length) { $('#suspList').innerHTML = '<div class="empty">Şüpheli görünen hesap yok 🎉</div>'; return; }
+  $('#suspList').innerHTML = `<table><thead><tr><th>Üye</th><th class="num">Puan</th><th class="num">Açık şikayet</th>
+      <th class="num hide-m">Şikayet (30 gün)</th><th class="num hide-m">Engellenme (7 gün)</th><th class="num hide-m">Davet (24 saat)</th><th class="num hide-m">Yeni sohbet (24 saat)</th><th class="hide-m">Kayıt</th></tr></thead><tbody>
+    ${list.map((x) => `<tr class="click" data-member="${x.id}">
+      <td><b>${esc(x.username)}</b></td><td class="num"><span class="chip ${x.score >= 10 ? 'danger' : x.score >= 5 ? 'warn' : ''}">${x.score}</span></td>
+      <td class="num">${x.reports_open}</td><td class="num hide-m">${x.reports_30d}</td><td class="num hide-m">${x.blocked_by_7d}</td>
+      <td class="num hide-m">${x.invites_24h}</td><td class="num hide-m">${x.new_chats_24h}</td><td class="muted hide-m">${date(x.created_at)}</td></tr>`).join('')}
+  </tbody></table>`;
+}
+
+// ---------- calls ----------
+const dur = (sec) => sec == null ? 'açılmadı' : sec < 60 ? `${sec} sn` : `${Math.floor(sec / 60)} dk ${sec % 60} sn`;
+async function loadCalls() {
+  const list = await rpc('admin_calls', { page_size: 200 });
+  if (!list.length) { $('#callList').innerHTML = '<div class="empty">Henüz görüşme yok</div>'; return; }
+  $('#callList').innerHTML = `<table><thead><tr><th>Tarih</th><th>Arayan</th><th>Aranan</th><th class="num">Süre</th><th class="num">Jeton</th></tr></thead><tbody>
+    ${list.map((c) => `<tr><td class="muted">${date(c.sort_at)}</td>
+      <td>${c.caller_id ? `<a href="#" data-member="${c.caller_id}">${esc(c.caller ?? 'silinmiş')}</a>` : 'silinmiş'}</td>
+      <td>${c.callee_id ? `<a href="#" data-member="${c.callee_id}">${esc(c.callee ?? 'silinmiş')}</a>` : 'silinmiş'}</td>
+      <td class="num">${c.live ? '<span class="chip ok">Şu an görüşüyor</span>' : dur(c.seconds)}</td><td class="num">${num(c.coins_spent)}</td></tr>`).join('')}
+  </tbody></table>`;
+}
+
+// ---------- announcements ----------
+$('#annSend').onclick = async () => {
+  const title = $('#annTitle').value.trim(), body = $('#annBody').value.trim();
+  if (!body) return toast('Mesaj yaz');
+  if (!confirm(`Bu bildirim bütün üyelere gidecek:\n\n${title || 'Vibo / OME'}\n${body}\n\nGönderilsin mi?`)) return;
+  $('#annSend').disabled = true;
+  try {
+    const n = await rpc('admin_send_push', { title: title || null, body, member: null });
+    toast(`${num(n)} telefona gönderildi`);
+    $('#annTitle').value = ''; $('#annBody').value = '';
+    loadAnnouncements();
+  } finally { $('#annSend').disabled = false; }
+};
+async function loadAnnouncements() {
+  const list = await rpc('admin_announcements_list', { page_size: 100 });
+  $('#annList').innerHTML = list.length ? `<table><thead><tr><th>Tarih</th><th>Kime</th><th>Bildirim</th><th class="num">Telefon</th></tr></thead><tbody>
+    ${list.map((a) => `<tr><td class="muted">${date(a.created_at)}</td><td>${a.member_id ? `<a href="#" data-member="${a.member_id}">${esc(a.member ?? 'silinmiş')}</a>` : 'Herkes'}</td>
+      <td><b>${esc(a.title)}</b><div class="muted">${esc(a.body)}</div></td><td class="num">${num(a.devices)}</td></tr>`).join('')}</tbody></table>`
+    : '<div class="muted">Henüz bildirim gönderilmedi</div>';
+}
+
+// ---------- alerts ----------
+// A sound, a browser notification and a count in the tab title when new reports or photos to review arrive.
+let lastCounts = null;
+function beep() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.frequency.value = 880; g.gain.setValueAtTime(0.15, ctx.currentTime); g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
+    o.connect(g).connect(ctx.destination); o.start(); o.stop(ctx.currentTime + 0.4);
+  } catch { /* no audio */ }
+}
+function checkAlerts(s) {
+  const counts = { reports: s.reports_open || 0, photos: s.photos_pending || 0 };
+  const waiting = counts.reports + counts.photos;
+  document.title = waiting ? `(${waiting}) Yönetim Paneli` : 'Yönetim Paneli';
+  if (lastCounts) {
+    const news = [];
+    if (counts.reports > lastCounts.reports) news.push(`${counts.reports - lastCounts.reports} yeni şikayet`);
+    if (counts.photos > lastCounts.photos) news.push(`${counts.photos - lastCounts.photos} yeni fotoğraf onay bekliyor`);
+    if (news.length) {
+      beep();
+      toast(news.join(', '));
+      if ('Notification' in window && Notification.permission === 'granted') new Notification('Yönetim Paneli', { body: news.join('\n') });
+    }
+  }
+  lastCounts = counts;
+}
+if ('Notification' in window && Notification.permission === 'default') $('#notifyBtn').hidden = false;
+$('#notifyBtn').onclick = async () => {
+  const r = await Notification.requestPermission();
+  $('#notifyBtn').hidden = true;
+  toast(r === 'granted' ? 'Bildirimler açık' : 'Bildirim izni verilmedi, sadece ses çalacak');
+};
+
 // ---------- sales ----------
 async function loadSales() {
-  const d = await rpc('admin_sales', { page_size: 300 });
+  const [d, rev] = await Promise.all([rpc('admin_sales', { page_size: 300 }), rpc('admin_revenue', { days: 30 })]);
   const active = d.subscriptions.filter((s) => s.active);
+  const total30 = rev.days.reduce((a, x) => a + Number(x.coin_try), 0);
+  const today = rev.days[rev.days.length - 1] || { coin_try: 0 };
+  const shortTl = (v) => (v ? '₺' + num(Math.round(v)) : '');
+  rev.days.forEach((x) => (x.coin_try = Number(x.coin_try)));
   $('#tab-sales').innerHTML = `
+    <div class="tiles">
+      <div class="tile"><div class="v">${tl(today.coin_try)}</div><div class="l">Bugünkü jeton geliri</div></div>
+      <div class="tile"><div class="v">${tl(total30)}</div><div class="l">Son 30 gün jeton geliri</div></div>
+      <div class="tile"><div class="v">${tl(rev.pro_monthly_try)}</div><div class="l">Pro aylık gelir (tahmini)</div><div class="s">${num(rev.pro_active)} aktif Pro üye</div></div>
+    </div>
+    <div class="card"><h2>Son 30 gün günlük jeton geliri</h2>${barChart(rev.days, 'coin_try', (v) => tl(v), shortTl, 'Son 30 günde günlük jeton geliri')}</div>
     <div class="card scroll"><h2>Pro abonelikler (${active.length} aktif)</h2>
       ${d.subscriptions.length ? `<table><thead><tr><th>Üye</th><th>Plan</th><th class="hide-m">Mağaza</th><th>Bitiş</th><th class="num">Fiyat</th><th>Durum</th></tr></thead><tbody>
       ${d.subscriptions.map((s) => `<tr><td><a href="#" data-member="${s.user_id}">${esc(s.username ?? 'silinmiş')}</a></td>
