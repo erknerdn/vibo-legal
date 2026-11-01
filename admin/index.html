@@ -141,6 +141,7 @@
       <button data-tab="messages">Mesajlar</button>
       <button data-tab="calls">Görüşmeler</button>
       <button data-tab="sales">Satışlar</button>
+      <button data-tab="staff">Çalışanlar</button>
       <button data-tab="announce">Duyurular</button>
       <button data-tab="crashes">Hatalar</button>
     </nav>
@@ -204,6 +205,20 @@
       <p class="muted" style="font-size:13px;margin-top:0">Son görüntülü görüşmeler. Görüntü ve ses kaydedilmez, sadece kim kiminle ne kadar konuştu görünür.</p>
       <div class="card scroll" id="callList"></div>
     </section>
+    <section id="tab-staff" hidden>
+      <div class="row">
+        <select id="staffPeriod">
+          <option value="today">Bugün</option>
+          <option value="yesterday">Dün</option>
+          <option value="7">Son 7 gün</option>
+          <option value="month">Bu ay</option>
+          <option value="30">Son 30 gün</option>
+        </select>
+        <span class="muted" style="font-size:13px">Birini eklemek için Üyeler'den sayfasını aç ve "Host yap"a bas.</span>
+      </div>
+      <div class="card scroll" id="staffList"></div>
+      <p class="muted" style="font-size:13px">Çevrimiçi süre, uygulama açıkken dakikada bir gelen sinyalden hesaplanır. Uygulama arka plandayken sayılmaz. Görüşme süresi görüntülü görüşmede geçen süredir.</p>
+    </section>
     <section id="tab-announce" hidden>
       <div class="card">
         <h2>Herkese bildirim gönder</h2>
@@ -224,6 +239,11 @@
 <dialog id="memberDialog">
   <div class="head"><h2 id="mdTitle">Üye</h2><button class="btn small" id="mdClose">Kapat</button></div>
   <div class="body" id="mdBody"></div>
+</dialog>
+
+<dialog id="staffDialog">
+  <div class="head"><h2 id="staffTitle">Çalışan</h2><button class="btn small" id="staffClose">Kapat</button></div>
+  <div class="body" id="staffBody"></div>
 </dialog>
 
 <dialog id="chatDialog">
@@ -313,7 +333,7 @@ sb.auth.onAuthStateChange((_event, session) => { setTimeout(() => start(session)
 
 // ---------- tabs ----------
 let current = 'overview';
-const loaders = { overview: loadOverview, reports: loadReports, photos: loadPhotos, suspicious: loadSuspicious, calls: loadCalls, announce: loadAnnouncements, members: () => loadMembers(true), messages: loadConversations, sales: loadSales, crashes: loadCrashes };
+const loaders = { overview: loadOverview, reports: loadReports, photos: loadPhotos, staff: loadStaff, suspicious: loadSuspicious, calls: loadCalls, announce: loadAnnouncements, members: () => loadMembers(true), messages: loadConversations, sales: loadSales, crashes: loadCrashes };
 document.querySelectorAll('nav.tabs button').forEach((b) => (b.onclick = () => openTab(b.dataset.tab)));
 function openTab(tab) {
   current = tab;
@@ -334,7 +354,7 @@ async function refreshNow() {
   $('#updated').textContent = 'Güncellendi ' + new Date().toLocaleTimeString('tr-TR', { timeStyle: 'short' });
 }
 function busy() {
-  return $('#memberDialog').open || $('#chatDialog').open || document.querySelector('details[open]')
+  return $('#memberDialog').open || $('#chatDialog').open || $('#staffDialog').open || document.querySelector('details[open]')
     || document.activeElement?.matches('input, select, textarea')
     || (current === 'members' && memberOffset > PAGE);
 }
@@ -478,7 +498,8 @@ $('#mdClose').onclick = () => $('#memberDialog').close();
 let openId = null;
 async function openMember(id) {
   openId = id;
-  const [d, convs] = await Promise.all([rpc('admin_member', { member: id }), rpc('admin_conversations', { member: id, page_size: 100 })]);
+  const [d, convs, staff] = await Promise.all([rpc('admin_member', { member: id }), rpc('admin_conversations', { member: id, page_size: 100 }),
+    rpc('admin_is_staff', { member: id })]);
   const p = d.profile;
   if (!p) { toast('Üye bulunamadı (hesabını silmiş olabilir)'); return; }
   $('#mdTitle').textContent = p.username;
@@ -492,13 +513,14 @@ async function openMember(id) {
   const photoStatus = { approved: ['Yayında', 'ok'], pending: ['Bekliyor', 'warn'], rejected: ['Kaldırıldı', 'danger'] };
   $('#mdBody').innerHTML = `
     <div class="row">
-      ${statusChip(p.status)} ${p.is_verified ? '<span class="chip ok">Doğrulanmış</span>' : ''} ${p.is_pro ? '<span class="chip">Pro</span>' : ''}
+      ${statusChip(p.status)} ${staff ? `<span class="chip ok">★ Host${staff.title ? ' · ' + esc(staff.title) : ''}</span>` : ''} ${p.is_verified ? '<span class="chip ok">Doğrulanmış</span>' : ''} ${p.is_pro ? '<span class="chip">Pro</span>' : ''}
       <span style="flex:1"></span>
       ${p.status === 'banned' || p.status === 'suspended'
         ? `<button class="btn ok" data-status="active">Banı kaldır</button>`
         : `<button class="btn" data-status="suspended">Askıya al</button><button class="btn danger" data-status="banned">Banla</button>`}
       <button class="btn" id="coinBtn">Jeton ekle / düş</button>
       <button class="btn" id="pushBtn">Bildirim gönder</button>
+      <button class="btn" id="staffBtn">${staff ? 'Host\'luktan çıkar' : 'Host yap'}</button>
     </div>
     <div class="split">
       <div class="card">
@@ -563,6 +585,17 @@ async function openMember(id) {
         <td class="num" style="color:${l.amount < 0 ? 'var(--danger)' : 'var(--ok)'}">${l.amount > 0 ? '+' : ''}${num(l.amount)}</td></tr>`).join('')}</tbody></table>` : '<div class="muted">Hareket yok</div>'}
     </div>`;
   if (!$('#memberDialog').open) $('#memberDialog').showModal();
+  $('#staffBtn').onclick = async () => {
+    if (staff) {
+      if (!confirm(`${p.username} Host'luktan çıkarılsın mı? Rozeti kalkar, geçmiş kayıtları silinmez.`)) return;
+      await rpc('admin_set_staff', { member: id, is_staff: false, title: null });
+    } else {
+      const title = prompt(`${p.username} Host yapılsın mı? Uygulamada isminin yanında Host rozeti çıkar ve çalışma saatleri takip edilir.\n\nNot (sadece sen görürsün, isteğe bağlı):`, '');
+      if (title === null) return;
+      await rpc('admin_set_staff', { member: id, is_staff: true, title });
+    }
+    toast('Güncellendi'); openMember(id);
+  };
   $('#pushBtn').onclick = async () => {
     const body = prompt(`${p.username} adlı üyenin telefonuna gidecek mesaj (en fazla 300 harf):`);
     if (!body?.trim()) return;
@@ -681,6 +714,56 @@ async function loadCrashes() {
       <td>${c.user_id ? `<a href="#" data-member="${c.user_id}">${esc(c.username ?? 'silinmiş')}</a>` : '<span class="muted">girişsiz</span>'}</td></tr>`).join('')}
   </tbody></table>`;
 }
+
+// ---------- staff ----------
+const hours = (sec) => { sec = Math.round(sec || 0); const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60); return h ? `${h} sa ${m} dk` : `${m} dk`; };
+const timeOf = (d) => d ? new Date(d).toLocaleTimeString('tr-TR', { timeStyle: 'short' }) : '—';
+function periodRange(v) {
+  const start = new Date(); start.setHours(0, 0, 0, 0);
+  if (v === 'today') return [start, new Date()];
+  if (v === 'yesterday') { const y = new Date(start); y.setDate(y.getDate() - 1); return [y, start]; }
+  if (v === 'month') { const m = new Date(start); m.setDate(1); return [m, new Date()]; }
+  const d = new Date(start); d.setDate(d.getDate() - (Number(v) - 1)); return [d, new Date()];
+}
+$('#staffPeriod').onchange = loadStaff;
+async function loadStaff() {
+  const [from, to] = periodRange($('#staffPeriod').value);
+  const list = await rpc('admin_staff_report', { period_start: from.toISOString(), period_end: to.toISOString() });
+  if (!list.length) { $('#staffList').innerHTML = '<div class="empty">Henüz Host eklenmedi. Üyeler sekmesinden birini açıp "Host yap"a bas.</div>'; return; }
+  $('#staffList').innerHTML = `<table><thead><tr><th>Çalışan</th><th class="num">Çevrimiçi</th><th class="num">Görüşme</th><th class="num">Görüşme süresi</th>
+      <th class="num">Görüştüğü kişi</th><th class="num hide-m">Mesaj</th><th class="num hide-m">Yazıştığı kişi</th><th class="num hide-m">Davet (kabul/gelen)</th><th class="hide-m">Son görülme</th></tr></thead><tbody>
+    ${list.map((x) => `<tr class="click" data-staff="${x.user_id}" data-name="${esc(x.username)}">
+      <td><b>${esc(x.username)}</b>${x.title ? `<div class="muted" style="font-size:12px">${esc(x.title)}</div>` : ''}</td>
+      <td class="num"><b>${hours(x.online_seconds)}</b></td><td class="num">${num(x.calls)}</td><td class="num">${hours(x.call_seconds)}</td>
+      <td class="num">${num(x.call_people)}</td><td class="num hide-m">${num(x.messages_sent)}</td><td class="num hide-m">${num(x.chat_people)}</td>
+      <td class="num hide-m">${num(x.invites_accepted)} / ${num(x.invites_received)}</td><td class="muted hide-m">${ago(x.last_seen_at)}</td></tr>`).join('')}
+  </tbody></table>`;
+}
+$('#staffList').addEventListener('click', (e) => {
+  const r = e.target.closest('[data-staff]');
+  if (r) openStaff(r.dataset.staff, r.dataset.name);
+});
+$('#staffClose').onclick = () => $('#staffDialog').close();
+async function openStaff(id, name) {
+  const d = await rpc('admin_staff_detail', { member: id, days: 30 });
+  $('#staffTitle').textContent = name;
+  const chartDays = [...d.days].reverse().map((x) => ({ ...x, hours: Math.round(x.online_seconds / 360) / 10 }));
+  $('#staffBody').innerHTML = `
+    <div class="row"><button class="btn small" data-member="${id}">Üye sayfasını aç</button></div>
+    <div class="card"><h2>Son 30 gün çevrimiçi saat</h2>${barChart(chartDays, 'hours', (v) => `${v} saat`, (v) => (v ? v : ''), 'Son 30 günde günlük çevrimiçi saat')}</div>
+    <div class="card scroll"><h2>Gün gün</h2><table><thead><tr><th>Gün</th><th class="num">Çevrimiçi</th><th class="hide-m">İlk / son giriş</th><th class="num">Görüşme</th><th class="num">Görüşme süresi</th><th class="num">Mesaj</th></tr></thead><tbody>
+      ${d.days.map((x) => `<tr><td>${esc(new Date(x.day).toLocaleDateString('tr-TR', { weekday: 'short', day: 'numeric', month: 'short' }))}</td>
+        <td class="num"><b>${x.online_seconds ? hours(x.online_seconds) : '—'}</b></td>
+        <td class="muted hide-m">${x.first_seen ? `${timeOf(x.first_seen)} – ${timeOf(x.last_seen)}` : '—'}</td>
+        <td class="num">${num(x.calls)}</td><td class="num">${x.call_seconds ? hours(x.call_seconds) : '—'}</td><td class="num">${num(x.messages_sent)}</td></tr>`).join('')}
+    </tbody></table></div>
+    <div class="card scroll"><h2>Oturumlar</h2>${d.sessions.length ? `<table><thead><tr><th>Başladı</th><th>Bitti</th><th class="num">Süre</th></tr></thead><tbody>
+      ${d.sessions.map((x) => `<tr><td>${date(x.started_at)}</td><td>${timeOf(x.ended_at)}</td><td class="num">${hours(x.seconds)}</td></tr>`).join('')}</tbody></table>`
+      : '<div class="muted">Henüz kayıt yok. Çalışan uygulamayı açınca sayılmaya başlar.</div>'}</div>`;
+  if (!$('#staffDialog').open) $('#staffDialog').showModal();
+}
+// Opening the member page from the staff window closes it first.
+$('#staffBody').addEventListener('click', (e) => { if (e.target.closest('[data-member]')) $('#staffDialog').close(); });
 
 // ---------- suspicious ----------
 async function loadSuspicious() {
