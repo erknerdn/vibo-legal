@@ -7,7 +7,7 @@
 <title>Yönetim Paneli</title>
 <!--
   Admin panel for the app. All data comes from the admin_* database functions
-  (vibo-app: supabase/migrations/20261101150000_admin_panel.sql), which refuse anyone
+  (vibo-app: supabase/migrations/20261101230000_admin_panel.sql), which refuse anyone
   not listed in the admins table. This page holds only the public URL and publishable key.
 -->
 <style>
@@ -133,9 +133,11 @@
     <nav class="tabs">
       <button data-tab="overview" class="on">Özet</button>
       <button data-tab="reports">Şikayetler <span id="reportBadge"></span></button>
+      <button data-tab="photos">Fotoğraflar <span id="photoBadge"></span></button>
       <button data-tab="members">Üyeler</button>
       <button data-tab="messages">Mesajlar</button>
       <button data-tab="sales">Satışlar</button>
+      <button data-tab="crashes">Hatalar</button>
     </nav>
   </header>
   <main>
@@ -171,6 +173,28 @@
       <div class="card scroll" id="convList"></div>
     </section>
     <section id="tab-sales" hidden></section>
+    <section id="tab-photos" hidden>
+      <div class="card">
+        <label style="display:flex;gap:10px;align-items:flex-start;cursor:pointer">
+          <input type="checkbox" id="autoApprove" style="margin-top:4px">
+          <span><b>Yeni fotoğrafları otomatik onayla</b><br>
+          <span class="muted" style="font-size:13px">Açıkken yüklenen fotoğraf hemen yayınlanır. Kapatırsan yeni fotoğraflar sen onaylayana kadar kimseye görünmez ve burada sıraya girer.</span></span>
+        </label>
+      </div>
+      <div class="row">
+        <select id="photoFilter">
+          <option value="pending">Onay bekleyenler</option>
+          <option value="approved">Yayındakiler</option>
+          <option value="rejected">Kaldırılanlar</option>
+          <option value="">Hepsi</option>
+        </select>
+      </div>
+      <div class="card" id="photoGrid"></div>
+    </section>
+    <section id="tab-crashes" hidden>
+      <p class="muted" style="font-size:13px;margin-top:0">Üyelerin telefonunda oluşan uygulama hataları, en yenisi üstte.</p>
+      <div class="card scroll" id="crashList"></div>
+    </section>
   </main>
 </div>
 
@@ -265,7 +289,7 @@ sb.auth.onAuthStateChange((_event, session) => { setTimeout(() => start(session)
 
 // ---------- tabs ----------
 let current = 'overview';
-const loaders = { overview: loadOverview, reports: loadReports, members: () => loadMembers(true), messages: loadConversations, sales: loadSales };
+const loaders = { overview: loadOverview, reports: loadReports, photos: loadPhotos, members: () => loadMembers(true), messages: loadConversations, sales: loadSales, crashes: loadCrashes };
 document.querySelectorAll('nav.tabs button').forEach((b) => (b.onclick = () => openTab(b.dataset.tab)));
 function openTab(tab) {
   current = tab;
@@ -278,7 +302,7 @@ $('#refresh').onclick = () => loaders[current]();
 // ---------- overview ----------
 async function loadOverview() {
   const s = await rpc('admin_stats');
-  $('#reportBadge').innerHTML = s.reports_open ? `<span class="chip danger">${s.reports_open}</span>` : '';
+  setBadges(s);
   const tile = (v, l, sub = '', alert = false) =>
     `<div class="tile${alert ? ' alert' : ''}"><div class="v">${v}</div><div class="l">${esc(l)}</div>${sub ? `<div class="s">${sub}</div>` : ''}</div>`;
   const plans = Object.entries(s.pro_by_plan || {}).map(([p, n]) => `${PLAN[p] ?? p}: ${n}`).join(' · ');
@@ -297,6 +321,8 @@ async function loadOverview() {
       ${tile(num(s.banned), 'Banlı üye', s.suspended ? `${num(s.suspended)} askıda` : '')}
       ${tile(num(s.calls_today), 'Bugünkü görüşme', `${num(s.call_minutes_today)} dakika · toplam ${num(s.calls_total)}`)}
       ${tile(num(s.messages_today), 'Bugünkü mesaj')}
+      ${tile(num(s.photos_pending), 'Onay bekleyen fotoğraf', '', s.photos_pending > 0)}
+      ${tile(num(s.crashes_24h), 'Son 24 saatte hata', '', s.crashes_24h > 0)}
       ${tile(num(s.pro_active), 'Aktif Pro üye', esc(plans))}
       ${tile(tl(s.coin_revenue_try), 'Jeton geliri (tahmini)', `${num(s.coin_purchases)} satış · son 30 gün ${tl(s.coin_revenue_30d_try)}`)}
     </div>
@@ -359,9 +385,10 @@ document.addEventListener('click', async (e) => {
   }
   loadReports(); refreshBadge();
 });
-async function refreshBadge() {
-  const s = await rpc('admin_stats');
+async function refreshBadge() { setBadges(await rpc('admin_stats')); }
+function setBadges(s) {
   $('#reportBadge').innerHTML = s.reports_open ? `<span class="chip danger">${s.reports_open}</span>` : '';
+  $('#photoBadge').innerHTML = s.photos_pending ? `<span class="chip warn">${s.photos_pending}</span>` : '';
 }
 
 // ---------- members ----------
@@ -537,6 +564,54 @@ async function openChat(id, title) {
 }
 // Opening a member from inside a chat closes the chat first.
 $('#chatBody').addEventListener('click', (e) => { if (e.target.closest('[data-member]')) $('#chatDialog').close(); });
+
+// ---------- photo review ----------
+$('#photoFilter').onchange = loadPhotos;
+$('#autoApprove').onchange = async (e) => {
+  const on = e.target.checked;
+  if (!confirm(on ? 'Yeni fotoğraflar otomatik onaylansın mı?' : 'Otomatik onay kapansın mı? Yeni fotoğraflar sen onaylayana kadar görünmez.')) { e.target.checked = !on; return; }
+  await rpc('admin_set_photo_auto_approve', { enabled: on });
+  toast(on ? 'Otomatik onay açık' : 'Otomatik onay kapalı');
+};
+async function loadPhotos() {
+  const d = await rpc('admin_photos', { photo_status: $('#photoFilter').value, page_size: 120 });
+  $('#autoApprove').checked = d.auto_approve;
+  $('#photoBadge').innerHTML = d.pending ? `<span class="chip warn">${d.pending}</span>` : '';
+  if (!d.photos.length) { $('#photoGrid').innerHTML = '<div class="empty">Burada fotoğraf yok</div>'; return; }
+  const urls = {};
+  const { data } = await sb.storage.from('photos').createSignedUrls(d.photos.map((x) => x.storage_path), 3600);
+  (data || []).forEach((u) => { if (u.signedUrl) urls[u.path] = u.signedUrl; });
+  $('#photoGrid').innerHTML = `<div class="photos">${d.photos.map((ph) => `<div class="photo">
+      ${urls[ph.storage_path] ? `<a href="${esc(urls[ph.storage_path])}" target="_blank" rel="noopener"><img src="${esc(urls[ph.storage_path])}" alt=""></a>` : '<img alt="">'}
+      <div style="font-size:13px;margin-top:4px"><a href="#" data-member="${ph.user_id}">${esc(ph.username)}</a> <span class="muted">${esc(day(ph.created_at))}</span></div>
+      <div class="meta">
+        ${ph.moderation_status !== 'approved' ? `<button class="btn small ok" data-qphoto="${ph.id}" data-to="approved">Onayla</button>` : ''}
+        ${ph.moderation_status !== 'rejected' ? `<button class="btn small danger" data-qphoto="${ph.id}" data-to="rejected">Kaldır</button>` : ''}
+      </div></div>`).join('')}</div>`;
+}
+$('#photoGrid').addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-qphoto]');
+  if (!b) return;
+  b.disabled = true;
+  await rpc('admin_set_photo_status', { photo: b.dataset.qphoto, new_status: b.dataset.to });
+  b.closest('.photo').remove();
+  refreshBadge();
+});
+
+// ---------- crash reports ----------
+async function loadCrashes() {
+  const list = await rpc('admin_crash_reports', { page_size: 300 });
+  if (!list.length) { $('#crashList').innerHTML = '<div class="empty">Hata kaydı yok 🎉</div>'; return; }
+  $('#crashList').innerHTML = `<table><thead><tr><th>Tarih</th><th>Hata</th><th class="hide-m">Ekran</th><th class="hide-m">Cihaz</th><th>Üye</th></tr></thead><tbody>
+    ${list.map((c) => `<tr>
+      <td class="muted">${date(c.created_at)}</td>
+      <td>${c.fatal ? '<span class="chip danger">Çöktü</span> ' : ''}${esc(c.message)}
+        ${c.stack ? `<details><summary class="muted" style="font-size:12px;cursor:pointer">ayrıntı</summary><pre style="white-space:pre-wrap;font-size:11px;margin:4px 0">${esc(c.stack)}</pre></details>` : ''}</td>
+      <td class="hide-m muted">${esc(c.screen ?? '—')}</td>
+      <td class="hide-m muted">${esc([c.platform, c.os_version, c.app_version && 'v' + c.app_version].filter(Boolean).join(' · '))}</td>
+      <td>${c.user_id ? `<a href="#" data-member="${c.user_id}">${esc(c.username ?? 'silinmiş')}</a>` : '<span class="muted">girişsiz</span>'}</td></tr>`).join('')}
+  </tbody></table>`;
+}
 
 // ---------- sales ----------
 async function loadSales() {
