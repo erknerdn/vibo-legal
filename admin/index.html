@@ -796,7 +796,7 @@ async function loadCalls() {
 $('#annSend').onclick = async () => {
   const title = $('#annTitle').value.trim(), body = $('#annBody').value.trim();
   if (!body) return toast('Mesaj yaz');
-  if (!confirm(`Bu bildirim bütün üyelere gidecek:\n\n${title || 'Vibo / OME'}\n${body}\n\nGönderilsin mi?`)) return;
+  if (!confirm(`Bu bildirim bütün üyelere gidecek:\n\n${title || 'Vibo'}\n${body}\n\nGönderilsin mi?`)) return;
   $('#annSend').disabled = true;
   try {
     const n = await rpc('admin_send_push', { title: title || null, body, member: null });
