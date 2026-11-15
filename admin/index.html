@@ -95,6 +95,12 @@
   .daysep { align-self: center; font-size: 12px; color: var(--muted); margin: 8px 0 2px; }
   a { color: var(--accent); }
   .actions { display: flex; flex-wrap: wrap; gap: 4px; min-width: 120px; }
+  .vcard { display: grid; grid-template-columns: 220px 1fr; gap: 16px; }
+  .vcard .selfie img { width: 220px; height: 293px; object-fit: cover; border-radius: 10px; background: var(--chip); display: block; }
+  .vcard .pose { font-size: 15px; margin: 6px 0 0; }
+  .vcard .photos img { width: 110px; height: 147px; }
+  .vcard .photo { width: 110px; }
+  @media (max-width: 560px) { .vcard { grid-template-columns: 1fr; } }
   .toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg); padding: 10px 16px; border-radius: 10px; font-size: 14px; z-index: 20; }
 </style>
 </head>
@@ -135,6 +141,7 @@
     <nav class="tabs">
       <button data-tab="overview" class="on">Özet</button>
       <button data-tab="reports">Şikayetler <span id="reportBadge"></span></button>
+      <button data-tab="verify">Doğrulama <span id="verifyBadge"></span></button>
       <button data-tab="photos">Fotoğraflar <span id="photoBadge"></span></button>
       <button data-tab="suspicious">Şüpheli <span id="suspBadge"></span></button>
       <button data-tab="members">Üyeler</button>
@@ -179,6 +186,18 @@
       <div class="card scroll" id="convList"></div>
     </section>
     <section id="tab-sales" hidden></section>
+    <section id="tab-verify" hidden>
+      <p class="muted" style="font-size:13px;margin-top:0">Üyeler ön kamerayla, ekranda istenen pozu yaparak canlı selfie çeker (galeriden seçemez). Selfiedeki kişi profil fotoğraflarındaki kişiyle aynıysa ve istenen poz görünüyorsa onayla: üyeye mavi tik gelir ve Keşfet'te öne çıkar. Selfieler sadece burada görünür.</p>
+      <div class="row">
+        <select id="verifyFilter">
+          <option value="pending">Onay bekleyenler</option>
+          <option value="approved">Onaylananlar</option>
+          <option value="rejected">Reddedilenler</option>
+          <option value="">Hepsi</option>
+        </select>
+      </div>
+      <div id="verifyList"></div>
+    </section>
     <section id="tab-photos" hidden>
       <div class="card">
         <label style="display:flex;gap:10px;align-items:flex-start;cursor:pointer">
@@ -280,7 +299,7 @@ const flag = (cc) => cc ? cc.toUpperCase() : '—';
 const GENDER = { female: 'Kadın', male: 'Erkek', other: 'Diğer' };
 const STATUS = { active: ['Aktif', 'ok'], suspended: ['Askıda', 'warn'], banned: ['Banlı', 'danger'] };
 const REPORT_STATUS = { open: ['Açık', 'warn'], actioned: ['İşlem yapıldı', 'ok'], dismissed: ['Yoksayıldı', ''] };
-const REASON = { nudity: 'Çıplaklık', harassment: 'Taciz', minor: '18 yaş altı', scam: 'Dolandırıcılık', hate: 'Nefret söylemi', other: 'Diğer' };
+const REASON = { fake: 'Sahte profil', nudity: 'Çıplaklık', harassment: 'Taciz', minor: '18 yaş altı', scam: 'Dolandırıcılık', hate: 'Nefret söylemi', other: 'Diğer' };
 const LEDGER = { purchase: 'Jeton satın alma', refund: 'İade', call_minute: 'Görüşme dakikası', gift: 'Hediye', boost: 'Öne çıkarma',
   extra_invites: 'Ek davet', pro_bonus: 'Pro aylık jeton', admin: 'Admin düzeltmesi', new_chat: 'Yeni sohbet' };
 const PLAN = { weekly: 'Haftalık', monthly: 'Aylık', yearly: 'Yıllık' };
@@ -333,7 +352,7 @@ sb.auth.onAuthStateChange((_event, session) => { setTimeout(() => start(session)
 
 // ---------- tabs ----------
 let current = 'overview';
-const loaders = { overview: loadOverview, reports: loadReports, photos: loadPhotos, staff: loadStaff, suspicious: loadSuspicious, calls: loadCalls, announce: loadAnnouncements, members: () => loadMembers(true), messages: loadConversations, sales: loadSales, crashes: loadCrashes };
+const loaders = { overview: loadOverview, reports: loadReports, verify: loadVerifications, photos: loadPhotos, staff: loadStaff, suspicious: loadSuspicious, calls: loadCalls, announce: loadAnnouncements, members: () => loadMembers(true), messages: loadConversations, sales: loadSales, crashes: loadCrashes };
 document.querySelectorAll('nav.tabs button').forEach((b) => (b.onclick = () => openTab(b.dataset.tab)));
 function openTab(tab) {
   current = tab;
@@ -460,8 +479,16 @@ document.addEventListener('click', async (e) => {
   loadReports(); refreshBadge();
 });
 async function refreshBadge() { setBadges(await rpc('admin_stats')); }
-function setBadges(s) {
-  checkAlerts(s);
+// Selfies waiting for review. Not part of admin_stats; until sql/selfie-dogrulama-1.sql runs this stays 0.
+let verifyPending = 0;
+async function fetchVerifyPending() {
+  const { data, error } = await sb.rpc('admin_verifications', { req_status: 'pending', page_size: 1 });
+  verifyPending = error ? 0 : data.pending;
+  $('#verifyBadge').innerHTML = verifyPending ? `<span class="chip warn">${verifyPending}</span>` : '';
+}
+async function setBadges(s) {
+  await fetchVerifyPending();
+  checkAlerts({ ...s, verifications_pending: verifyPending });
   $('#reportBadge').innerHTML = s.reports_open ? `<span class="chip danger">${s.reports_open}</span>` : '';
   $('#photoBadge').innerHTML = s.photos_pending ? `<span class="chip warn">${s.photos_pending}</span>` : '';
 }
@@ -520,6 +547,7 @@ async function openMember(id) {
         : `<button class="btn" data-status="suspended">Askıya al</button><button class="btn danger" data-status="banned">Banla</button>`}
       <button class="btn" id="coinBtn">Jeton ekle / düş</button>
       <button class="btn" id="pushBtn">Bildirim gönder</button>
+      <button class="btn" id="tickBtn">${p.is_verified ? 'Mavi tiki kaldır' : 'Mavi tik ver'}</button>
       <button class="btn" id="staffBtn">${staff ? 'Host\'luktan çıkar' : 'Host yap'}</button>
     </div>
     <div class="split">
@@ -601,6 +629,12 @@ async function openMember(id) {
     if (!body?.trim()) return;
     const n = await rpc('admin_send_push', { title: null, body, member: id });
     toast(n ? 'Bildirim gönderildi' : 'Bu üyenin bildirimleri kapalı, gönderilemedi');
+  };
+  $('#tickBtn').onclick = async () => {
+    const give = !p.is_verified;
+    if (!confirm(give ? `${p.username} adlı üyeye selfie olmadan mavi tik verilsin mi?` : `${p.username} adlı üyenin mavi tiki kaldırılsın mı? Tekrar almak için yeni selfie göndermesi gerekir.`)) return;
+    await rpc('admin_set_verified', { member: id, verified: give });
+    toast(give ? 'Mavi tik verildi' : 'Mavi tik kaldırıldı'); openMember(id);
   };
   $('#coinBtn').onclick = async () => {
     const v = prompt('Kaç jeton? Eklemek için 50, düşmek için -50 yaz.');
@@ -698,6 +732,74 @@ $('#photoGrid').addEventListener('click', async (e) => {
   await rpc('admin_set_photo_status', { photo: b.dataset.qphoto, new_status: b.dataset.to });
   b.closest('.photo').remove();
   refreshBadge();
+});
+
+// ---------- selfie verification ----------
+// Same keys as the app (vibo-app: src/lib/verification.ts).
+const POSE = { thumbs_up: '👍 Başparmağını kaldır', peace: '✌️ Zafer işareti', open_palm: '✋ Avucunu göster',
+  three_fingers: '3️⃣ Üç parmak göster', touch_nose: '👃 Parmağıyla burnuna dokun', hand_on_cheek: '🤚 Eli yanağında' };
+const VSTATUS = { pending: ['Bekliyor', 'warn'], approved: ['Onaylandı', 'ok'], rejected: ['Reddedildi', 'danger'] };
+const REJECT_HINT = 'Selfiedeki kişi profil fotoğraflarındaki kişiyle aynı görünmüyor.';
+$('#verifyFilter').onchange = loadVerifications;
+async function loadVerifications() {
+  const { data: d, error } = await sb.rpc('admin_verifications', { req_status: $('#verifyFilter').value, page_size: 60 });
+  if (error) {
+    $('#verifyList').innerHTML = `<div class="card empty">${/admin_verifications/.test(error.message)
+      ? 'Doğrulama için veritabanı kurulumu henüz yapılmadı (sql/selfie-dogrulama-1.sql).' : esc('Hata: ' + error.message)}</div>`;
+    return;
+  }
+  $('#verifyBadge').innerHTML = d.pending ? `<span class="chip warn">${d.pending}</span>` : '';
+  if (!d.requests.length) { $('#verifyList').innerHTML = '<div class="card empty">Burada doğrulama isteği yok</div>'; return; }
+  const urls = {};
+  const sign = async (bucket, paths) => {
+    if (!paths.length) return;
+    const { data } = await sb.storage.from(bucket).createSignedUrls(paths, 3600);
+    (data || []).forEach((u) => { if (u.signedUrl) urls[bucket + ':' + u.path] = u.signedUrl; });
+  };
+  await Promise.all([sign('selfies', d.requests.map((r) => r.storage_path)), sign('photos', [...new Set(d.requests.flatMap((r) => r.photos))])]);
+  const img = (bucket, path, cls = '') => {
+    const u = urls[bucket + ':' + path];
+    return u ? `<a href="${esc(u)}" target="_blank" rel="noopener"><img class="${cls}" src="${esc(u)}" alt=""></a>` : '<img alt="">';
+  };
+  $('#verifyList').innerHTML = d.requests.map((r) => `<div class="card vcard" data-vreq="${r.id}">
+      <div class="selfie">${img('selfies', r.storage_path)}
+        <div class="pose">İstenen poz: <b>${esc(POSE[r.pose] ?? r.pose)}</b></div></div>
+      <div>
+        <div class="row" style="margin-bottom:8px">
+          <b><a href="#" data-member="${r.user_id}">${esc(r.username)}</a></b>
+          <span class="muted">${esc(r.age ?? '')} · ${esc(GENDER[r.gender] ?? '—')}</span>
+          ${chip(VSTATUS[r.status] ?? [r.status, ''])} ${r.member_status !== 'active' ? statusChip(r.member_status) : ''}
+          ${r.fake_reports ? `<span class="chip danger">${r.fake_reports} sahte profil şikayeti</span>` : ''}
+          <span class="muted" style="font-size:13px">${date(r.created_at)} · ${r.attempts}. deneme</span>
+        </div>
+        <div class="muted" style="font-size:13px;margin-bottom:6px">Profil fotoğrafları</div>
+        ${r.photos.length ? `<div class="photos">${r.photos.map((p) => `<div class="photo">${img('photos', p)}</div>`).join('')}</div>` : '<div class="muted">Profilinde fotoğraf yok</div>'}
+        ${r.reject_reason ? `<p class="muted" style="font-size:13px">Red sebebi: ${esc(r.reject_reason)}</p>` : ''}
+        <div class="row" style="margin:12px 0 0">
+          ${r.status !== 'approved' ? `<button class="btn ok" data-vreview="approve">Onayla, mavi tik ver</button>` : ''}
+          ${r.status !== 'rejected' ? `<button class="btn danger" data-vreview="reject">Reddet</button>` : ''}
+        </div>
+      </div></div>`).join('');
+}
+$('#verifyList').addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-vreview]');
+  if (!b) return;
+  const approve = b.dataset.vreview === 'approve';
+  let reason = null;
+  if (!approve) {
+    reason = prompt('Neden reddediyorsun? (üyeye uygulamada gösterilir)', REJECT_HINT);
+    if (reason === null) return;
+  }
+  const card = b.closest('[data-vreq]');
+  card.querySelectorAll('button').forEach((x) => (x.disabled = true));
+  const member = await rpc('admin_review_verification', { request: card.dataset.vreq, approve, reason });
+  toast(approve ? 'Onaylandı, mavi tik verildi' : 'Reddedildi');
+  // Best effort: a push so the member knows without opening the app.
+  sb.rpc('admin_send_push', { title: null, member,
+    body: approve ? 'Profilin doğrulandı ✓ Artık mavi tikin var ve Keşfet\'te öne çıkıyorsun.'
+                  : 'Doğrulama selfien onaylanmadı. Ayarlar > Profilini doğrula bölümünden tekrar deneyebilirsin.' });
+  if ($('#verifyFilter').value) card.remove(); else loadVerifications();
+  fetchVerifyPending();
 });
 
 // ---------- crash reports ----------
@@ -825,13 +927,14 @@ function beep() {
   } catch { /* no audio */ }
 }
 function checkAlerts(s) {
-  const counts = { reports: s.reports_open || 0, photos: s.photos_pending || 0 };
-  const waiting = counts.reports + counts.photos;
+  const counts = { reports: s.reports_open || 0, photos: s.photos_pending || 0, selfies: s.verifications_pending || 0 };
+  const waiting = counts.reports + counts.photos + counts.selfies;
   document.title = waiting ? `(${waiting}) Yönetim Paneli` : 'Yönetim Paneli';
   if (lastCounts) {
     const news = [];
     if (counts.reports > lastCounts.reports) news.push(`${counts.reports - lastCounts.reports} yeni şikayet`);
     if (counts.photos > lastCounts.photos) news.push(`${counts.photos - lastCounts.photos} yeni fotoğraf onay bekliyor`);
+    if (counts.selfies > lastCounts.selfies) news.push(`${counts.selfies - lastCounts.selfies} yeni doğrulama selfiesi bekliyor`);
     if (news.length) {
       beep();
       toast(news.join(', '));
