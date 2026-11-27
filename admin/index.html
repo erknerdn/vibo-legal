@@ -151,6 +151,7 @@
       <button data-tab="staff">Çalışanlar</button>
       <button data-tab="announce">Duyurular</button>
       <button data-tab="crashes">Hatalar</button>
+      <button data-tab="ai">AI karakterler</button>
     </nav>
   </header>
   <main>
@@ -251,6 +252,43 @@
       </div>
       <div class="card scroll"><h2>Gönderilenler</h2><div id="annList"></div></div>
     </section>
+    <section id="tab-ai" hidden>
+      <p class="muted" style="font-size:13px;margin-top:0">Uygulamada her yerde mor <b>AI</b> rozetiyle görünen sohbet karakterleri. Kendilerini gerçek insan diye tanıtmazlar, arama almazlar, para ya da buluşma istemezler. Fotoğraflar <b>AI ile üretilmiş</b> olmalı: başka sitelerden veya Pinterest'ten gerçek kişilerin fotoğrafını yükleme. Ücretsiz üyeler AI karakterlere günde 5 mesaj atabilir, Pro üyeler sınırsız.</p>
+      <div class="card">
+        <h2>Toplu oluştur</h2>
+        <div class="row" style="flex-wrap:wrap">
+          <label>Adet <input type="number" id="aiCount" min="1" max="50" value="5" style="width:80px"></label>
+          <label>Cinsiyet
+            <select id="aiGender">
+              <option value="f70">%70 kadın / %30 erkek</option>
+              <option value="f50">%50 / %50</option>
+              <option value="female">Yalnızca kadın</option>
+              <option value="male">Yalnızca erkek</option>
+            </select>
+          </label>
+          <label>Yaş <input type="number" id="aiMinAge" min="18" max="60" value="20" style="width:70px"> – <input type="number" id="aiMaxAge" min="18" max="60" value="32" style="width:70px"></label>
+        </div>
+        <div id="aiCountries"></div>
+        <div class="row">
+          <select id="aiAddCountry"></select>
+          <button class="btn small" id="aiAddCountryBtn">Ülke ekle</button>
+        </div>
+        <p class="muted" style="font-size:13px">Her ülke için şehirleri virgülle yaz. Ağırlık, o ülkeden kaç karakter çıkacağını belirler (ör. TR 60, DE 40). Dil, isim, biyografi ve sohbet dili ülkeye göre otomatik seçilir. Karakterler taslak olarak oluşur: her birine 3–6 fotoğraf ekle, sonra "Yayına al"a bas. Eksik profil yayına alınamaz.</p>
+        <div class="row"><button class="btn primary" id="aiGenerate">Oluştur</button> <span class="muted" id="aiGenMsg" style="font-size:13px"></span></div>
+      </div>
+      <div class="row">
+        <select id="aiFilter">
+          <option value="">Hepsi</option>
+          <option value="draft">Taslaklar</option>
+          <option value="live">Yayındakiler</option>
+        </select>
+        <button class="btn small" id="aiPublishSel">Seçilenleri yayına al</button>
+        <button class="btn small" id="aiPauseSel">Seçilenleri durdur</button>
+        <button class="btn small danger" id="aiDeleteSel">Seçilenleri sil</button>
+        <button class="btn small danger" id="aiDeleteAll">Hepsini sil</button>
+      </div>
+      <div class="card scroll" id="aiList"></div>
+    </section>
     <section id="tab-crashes" hidden>
       <p class="muted" style="font-size:13px;margin-top:0">Üyelerin telefonunda oluşan uygulama hataları, en yenisi üstte.</p>
       <div class="card scroll" id="crashList"></div>
@@ -266,6 +304,11 @@
 <dialog id="staffDialog">
   <div class="head"><h2 id="staffTitle">Çalışan</h2><button class="btn small" id="staffClose">Kapat</button></div>
   <div class="body" id="staffBody"></div>
+</dialog>
+
+<dialog id="aiDialog">
+  <div class="head"><h2 id="aiTitle">AI karakter</h2><button class="btn small" id="aiClose">Kapat</button></div>
+  <div class="body" id="aiBody"></div>
 </dialog>
 
 <dialog id="chatDialog">
@@ -355,7 +398,7 @@ sb.auth.onAuthStateChange((_event, session) => { setTimeout(() => start(session)
 
 // ---------- tabs ----------
 let current = 'overview';
-const loaders = { overview: loadOverview, reports: loadReports, verify: loadVerifications, photos: loadPhotos, staff: loadStaff, suspicious: loadSuspicious, calls: loadCalls, announce: loadAnnouncements, members: () => loadMembers(true), messages: loadConversations, sales: loadSales, crashes: loadCrashes };
+const loaders = { overview: loadOverview, reports: loadReports, verify: loadVerifications, photos: loadPhotos, staff: loadStaff, suspicious: loadSuspicious, calls: loadCalls, announce: loadAnnouncements, members: () => loadMembers(true), messages: loadConversations, sales: loadSales, crashes: loadCrashes, ai: loadAi };
 document.querySelectorAll('nav.tabs button').forEach((b) => (b.onclick = () => openTab(b.dataset.tab)));
 function openTab(tab) {
   current = tab;
@@ -376,7 +419,7 @@ async function refreshNow() {
   $('#updated').textContent = 'Güncellendi ' + new Date().toLocaleTimeString('tr-TR', { timeStyle: 'short' });
 }
 function busy() {
-  return $('#memberDialog').open || $('#chatDialog').open || $('#staffDialog').open || document.querySelector('details[open]')
+  return $('#memberDialog').open || $('#aiDialog').open || $('#chatDialog').open || $('#staffDialog').open || document.querySelector('details[open]')
     || document.activeElement?.matches('input, select, textarea')
     || (current === 'members' && memberOffset > PAGE);
 }
@@ -1015,6 +1058,206 @@ async function loadSales() {
       </tbody></table>` : '<div class="empty">Henüz jeton satışı yok</div>'}
     </div>
     <p class="muted" style="font-size:13px">Tutarlar mağaza liste fiyatıdır (TL). Kesin gelir ve komisyonlar RevenueCat, App Store Connect ve Google Play Console'da.</p>`;
+}
+// ---------- AI characters ----------
+// Created and changed through the ai-characters Edge Function (vibo-app: supabase/functions/ai-characters).
+const AI_COUNTRIES = { TR: 'Türkiye', DE: 'Almanya', NL: 'Hollanda', FR: 'Fransa', GB: 'Birleşik Krallık', US: 'ABD',
+  SA: 'Suudi Arabistan', AE: 'BAE', EG: 'Mısır', MA: 'Fas', QA: 'Katar', KW: 'Kuveyt', AZ: 'Azerbaycan', RU: 'Rusya', ES: 'İspanya' };
+const AI_DEFAULT_CITIES = { TR: 'İstanbul, İzmir, Ankara, Antalya, Bursa, Eskişehir, Muğla', DE: 'Berlin, Köln, Münih, Hamburg, Frankfurt',
+  NL: 'Amsterdam, Rotterdam, Lahey', FR: 'Paris, Lyon, Marsilya', GB: 'Londra, Manchester', US: 'New York, Los Angeles, Chicago',
+  SA: 'Riyad, Cidde', AE: 'Dubai, Abu Dabi', EG: 'Kahire, İskenderiye', MA: 'Kazablanka, Rabat', QA: 'Doha', KW: 'Kuveyt',
+  AZ: 'Bakü, Gence', RU: 'Moskova, St. Petersburg', ES: 'Madrid, Barselona' };
+const AI_INTERESTS = ['music', 'movies', 'travel', 'sports', 'fitness', 'gaming', 'books', 'cooking', 'art', 'photography',
+  'dance', 'fashion', 'tech', 'nature', 'animals', 'languages', 'coffee', 'cars'];
+let aiChars = [];
+
+async function aiCall(body) {
+  const { data, error } = await sb.functions.invoke('ai-characters', { body });
+  if (error) {
+    let msg = error.message;
+    try { msg = (await error.context.json()).error || msg; } catch { /* keep message */ }
+    toast('Hata: ' + msg); throw error;
+  }
+  return data;
+}
+
+function aiCountryRow(code, cities, weight) {
+  const div = document.createElement('div');
+  div.className = 'row'; div.dataset.code = code;
+  div.innerHTML = `<b style="width:150px">${esc(AI_COUNTRIES[code] ?? code)}</b>
+    <input class="aiCities" value="${esc(cities)}" style="flex:1;min-width:200px" placeholder="Şehirler, virgülle">
+    <label>Ağırlık <input class="aiWeight" type="number" min="0" max="100" value="${weight}" style="width:70px"></label>
+    <button class="btn small" data-remove>Kaldır</button>`;
+  div.querySelector('[data-remove]').onclick = () => div.remove();
+  $('#aiCountries').append(div);
+}
+$('#aiAddCountry').innerHTML = Object.entries(AI_COUNTRIES).map(([c, n]) => `<option value="${c}">${esc(n)}</option>`).join('');
+$('#aiAddCountryBtn').onclick = () => {
+  const c = $('#aiAddCountry').value;
+  if (!document.querySelector(`#aiCountries [data-code="${c}"]`)) aiCountryRow(c, AI_DEFAULT_CITIES[c] ?? '', 50);
+};
+aiCountryRow('TR', AI_DEFAULT_CITIES.TR, 100);
+
+$('#aiGenerate').onclick = async () => {
+  const countries = [...document.querySelectorAll('#aiCountries [data-code]')].map((r) => ({
+    code: r.dataset.code,
+    cities: r.querySelector('.aiCities').value.split(',').map((x) => x.trim()).filter(Boolean),
+    weight: Number(r.querySelector('.aiWeight').value) || 0,
+  }));
+  if (!countries.length) return toast('En az bir ülke ekle');
+  const count = Math.min(50, Math.max(1, Number($('#aiCount').value) || 1));
+  const b = $('#aiGenerate'); b.disabled = true;
+  $('#aiGenMsg').textContent = `${count} karakter oluşturuluyor, bu bir iki dakika sürebilir…`;
+  try {
+    const r = await aiCall({ action: 'generate', count, countries, gender_mix: $('#aiGender').value,
+      min_age: Number($('#aiMinAge').value), max_age: Number($('#aiMaxAge').value) });
+    $('#aiGenMsg').textContent = `${r.created.length} karakter taslak olarak oluştu.` + (r.errors.length ? ` ${r.errors.length} tanesi oluşturulamadı: ${r.errors[0]}` : ' Şimdi fotoğraflarını ekle.');
+    await loadAi();
+  } catch { $('#aiGenMsg').textContent = ''; } finally { b.disabled = false; }
+};
+
+$('#aiFilter').onchange = () => renderAi();
+async function loadAi() {
+  const { data, error } = await sb.rpc('admin_ai_characters');
+  if (error) {
+    $('#aiList').innerHTML = `<div class="empty">${/admin_ai_characters/.test(error.message)
+      ? 'Önce vibo-app içindeki 20261127190000_ai_characters.sql dosyasını Supabase SQL Editor\'da çalıştır.' : esc(error.message)}</div>`;
+    return;
+  }
+  aiChars = data;
+  const paths = data.map((c) => c.first_photo).filter(Boolean);
+  const urls = {};
+  if (paths.length) {
+    const { data: signed } = await sb.storage.from('photos').createSignedUrls(paths, 3600);
+    (signed || []).forEach((u) => { if (u.signedUrl) urls[u.path] = u.signedUrl; });
+  }
+  aiChars.forEach((c) => (c.photo_url = urls[c.first_photo] ?? null));
+  renderAi();
+}
+function aiMissing(c) {
+  const m = [];
+  if (c.photos < 3) m.push(`foto ${c.photos}/3`);
+  if (!c.bio) m.push('biyografi');
+  if ((c.interests || []).length < 5) m.push('ilgi alanı');
+  if ((c.languages || []).length < 2) m.push('dil');
+  return m;
+}
+function renderAi() {
+  const f = $('#aiFilter').value;
+  const list = aiChars.filter((c) => !f || (f === 'live' ? c.published : !c.published));
+  const live = aiChars.filter((c) => c.published).length;
+  if (!list.length) { $('#aiList').innerHTML = '<div class="empty">Henüz AI karakter yok</div>'; return; }
+  $('#aiList').innerHTML = `<p class="muted" style="font-size:13px;margin:0 0 8px">${aiChars.length} karakter, ${live} tanesi yayında. Bugün toplam ${num(aiChars.reduce((a, c) => a + c.replies_today, 0))} cevap.</p>
+    <table><thead><tr><th><input type="checkbox" id="aiAll"></th><th></th><th>Ad</th><th>Ülke</th><th class="hide-m">Yaş</th><th>Profil</th><th class="num">Sohbet</th><th class="num hide-m">Cevap</th><th class="num">Şikayet</th><th>Durum</th><th></th></tr></thead><tbody>
+    ${list.map((c) => { const miss = aiMissing(c); return `<tr>
+      <td><input type="checkbox" class="aiSel" value="${c.id}"></td>
+      <td>${c.photo_url ? `<img src="${esc(c.photo_url)}" alt="" style="width:36px;height:48px;object-fit:cover;border-radius:6px">` : ''}</td>
+      <td><b>${esc(c.display_name)}</b><br><span class="muted" style="font-size:12px">${esc(c.username)}</span></td>
+      <td>${esc(flag(c.country_code))}${c.city ? ' · ' + esc(c.city) : ''}</td>
+      <td class="hide-m">${c.age} · ${esc(GENDER[c.gender] ?? '')}</td>
+      <td>${miss.length ? `<span class="chip warn">Eksik: ${esc(miss.join(', '))}</span>` : '<span class="chip ok">%100</span>'}</td>
+      <td class="num">${num(c.chats)}</td><td class="num hide-m">${num(c.replies)}</td>
+      <td class="num">${c.reports ? `<span class="chip danger">${c.reports}</span>` : '0'}</td>
+      <td>${c.published ? '<span class="chip ok">Yayında</span>' : '<span class="chip">Taslak</span>'}${c.replies_enabled ? '' : ' <span class="chip warn">Cevap kapalı</span>'}</td>
+      <td><button class="btn small" data-ai-edit="${c.id}">Düzenle</button></td></tr>`; }).join('')}
+    </tbody></table>`;
+  $('#aiAll').onchange = (e) => document.querySelectorAll('.aiSel').forEach((x) => (x.checked = e.target.checked));
+}
+const aiSelected = () => [...document.querySelectorAll('.aiSel:checked')].map((x) => x.value);
+async function aiPublish(ids, published) {
+  if (!ids.length) return toast('Önce karakter seç');
+  const r = await aiCall({ action: 'publish', ids, published });
+  const bad = Object.keys(r.incomplete || {}).length;
+  toast(`${r.done.length} karakter ${published ? 'yayına alındı' : 'durduruldu'}` + (bad ? `, ${bad} tanesinin profili eksik` : ''));
+  await loadAi();
+}
+$('#aiPublishSel').onclick = () => aiPublish(aiSelected(), true);
+$('#aiPauseSel').onclick = () => aiPublish(aiSelected(), false);
+$('#aiDeleteSel').onclick = async () => {
+  const ids = aiSelected();
+  if (!ids.length) return toast('Önce karakter seç');
+  if (!confirm(`${ids.length} AI karakter, fotoğrafları ve sohbetleriyle birlikte kalıcı olarak silinsin mi?`)) return;
+  const r = await aiCall({ action: 'delete', ids });
+  toast(`${r.deleted} karakter silindi`); await loadAi();
+};
+$('#aiDeleteAll').onclick = async () => {
+  const typed = prompt('Bütün AI karakterler, fotoğrafları ve sohbetleri kalıcı olarak silinecek. Onaylamak için DELETE ALL yaz.');
+  if (typed !== 'DELETE ALL') return;
+  const r = await aiCall({ action: 'delete_all', confirm: 'DELETE ALL' });
+  toast(`${r.deleted} karakter silindi`); await loadAi();
+};
+
+$('#aiClose').onclick = () => $('#aiDialog').close();
+$('#aiList').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-ai-edit]');
+  if (b) openAi(b.dataset.aiEdit);
+});
+async function openAi(id) {
+  const c = aiChars.find((x) => x.id === id);
+  if (!c) return;
+  $('#aiTitle').textContent = `${c.display_name} · AI karakter`;
+  $('#aiBody').innerHTML = '<div class="empty">Yükleniyor…</div>';
+  $('#aiDialog').showModal();
+  const { photos } = await aiCall({ action: 'photos', id });
+  $('#aiBody').innerHTML = `
+    <div class="card"><h2>Fotoğraflar (${photos.length}/6, en az 3)</h2>
+      <p class="muted" style="font-size:13px;margin-top:0">Aynı kişinin farklı ortamlarda AI ile üretilmiş, tutarlı görselleri. Gerçek bir kişinin fotoğrafını yükleme.</p>
+      <div class="photos">${photos.map((p) => `<div class="photo"><img src="${esc(p.url ?? '')}" alt="">
+        <div class="meta"><button class="btn small danger" data-ai-rmphoto="${p.position}">Kaldır</button></div></div>`).join('')}</div>
+      ${photos.length < 6 ? '<div class="row"><input type="file" id="aiPhotoFile" accept="image/jpeg,image/png,image/webp" multiple></div>' : ''}
+    </div>
+    <div class="card"><h2>Profil</h2>
+      <div class="row"><label>Ad <input id="aiName" value="${esc(c.display_name)}"></label>
+        <label>Ülke <select id="aiCountry">${Object.entries(AI_COUNTRIES).map(([k, n]) => `<option value="${k}"${k === c.country_code ? ' selected' : ''}>${esc(n)}</option>`).join('')}</select></label>
+        <label>Şehir <input id="aiCity" value="${esc(c.city ?? '')}"></label></div>
+      <div class="row"><label>Diller <input id="aiLangs" value="${esc((c.languages || []).join(', '))}" placeholder="tr, en"></label>
+        <label>Cevap dili <input id="aiReplyLang" value="${esc(c.reply_language)}" style="width:60px"></label>
+        <label><input type="checkbox" id="aiReplies"${c.replies_enabled ? ' checked' : ''}> Otomatik cevap açık</label></div>
+      <label style="display:block;margin:8px 0">Biyografi (150 harf)<br><textarea id="aiBio" maxlength="150" rows="2" style="width:100%;font:inherit">${esc(c.bio ?? '')}</textarea></label>
+      <div style="margin:8px 0">İlgi alanları (5 tane)<br>${AI_INTERESTS.map((i) => `<label style="margin-right:10px;font-size:13px"><input type="checkbox" class="aiInt" value="${i}"${(c.interests || []).includes(i) ? ' checked' : ''}> ${i}</label>`).join('')}</div>
+      <label style="display:block;margin:8px 0">Kişilik (AI bu tarifle konuşur)<br><textarea id="aiPersona" maxlength="2000" rows="4" style="width:100%;font:inherit">${esc(c.persona)}</textarea></label>
+      <div class="row"><button class="btn primary" id="aiSave">Kaydet</button>
+        ${c.published ? `<button class="btn small" data-ai-pub="0">Durdur</button>` : `<button class="btn small ok" data-ai-pub="1">Yayına al</button>`}</div>
+    </div>`;
+  const file = $('#aiPhotoFile');
+  if (file) file.onchange = async () => {
+    for (const f of [...file.files]) {
+      const image = await aiJpegBase64(f);
+      await aiCall({ action: 'add_photo', id, image });
+    }
+    await loadAi(); openAi(id);
+  };
+  $('#aiBody').querySelectorAll('[data-ai-rmphoto]').forEach((b) => (b.onclick = async () => {
+    await aiCall({ action: 'remove_photo', id, position: Number(b.dataset.aiRmphoto) });
+    await loadAi(); openAi(id);
+  }));
+  $('#aiSave').onclick = async () => {
+    const interests = [...document.querySelectorAll('.aiInt:checked')].map((x) => x.value);
+    if (interests.length !== 5) return toast('Tam 5 ilgi alanı seç');
+    await aiCall({ action: 'update', id, fields: {
+      display_name: $('#aiName').value, country_code: $('#aiCountry').value, city: $('#aiCity').value,
+      languages: $('#aiLangs').value.split(',').map((x) => x.trim()).filter(Boolean), reply_language: $('#aiReplyLang').value.trim() || 'tr',
+      replies_enabled: $('#aiReplies').checked, bio: $('#aiBio').value, interests, persona: $('#aiPersona').value } });
+    toast('Kaydedildi'); await loadAi(); openAi(id);
+  };
+  const pub = $('#aiBody').querySelector('[data-ai-pub]');
+  if (pub) pub.onclick = async () => { await aiPublish([id], pub.dataset.aiPub === '1'); openAi(id); };
+}
+// Resizes to at most 1280px on the long side and re-encodes as JPEG, so uploads stay under 5 MB.
+function aiJpegBase64(file) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, 1280 / Math.max(img.width, img.height));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(img.width * scale); canvas.height = Math.round(img.height * scale);
+      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(img.src);
+      resolve(canvas.toDataURL('image/jpeg', 0.88).split(',')[1]);
+    };
+    img.onerror = reject;
+    img.src = URL.createObjectURL(file);
+  });
 }
 </script>
 </body>
