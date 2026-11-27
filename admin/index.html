@@ -1072,6 +1072,12 @@ const AI_INTERESTS = ['music', 'movies', 'travel', 'sports', 'fitness', 'gaming'
 let aiChars = [];
 
 async function aiCall(body) {
+  // Refresh the sign-in first, so a tab left open for hours doesn't send an expired token.
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session || session.expires_at * 1000 < Date.now() + 60_000) {
+    const { error: refreshError } = await sb.auth.refreshSession();
+    if (refreshError) { toast('Oturum süresi doldu. Çıkış yapıp yeniden giriş yap.'); throw refreshError; }
+  }
   const { data, error } = await sb.functions.invoke('ai-characters', { body });
   if (error) {
     let msg = error.message;
